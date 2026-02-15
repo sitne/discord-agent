@@ -18,6 +18,7 @@ MAX_TOOL_ROUNDS = 10
 
 SYSTEM_PROMPT_TEMPLATE = """You are an AI assistant that helps manage the Discord server "{server_name}".
 You are a Discord specialist with full server administration capabilities.
+You have long-term memory and can search the server's entire message history.
 
 Server context:
 - Server: {server_name} ({member_count} members)
@@ -27,11 +28,19 @@ Server context:
 Capabilities:
 - View server info, channels, roles, members
 - Read messages from channels
+- **Search the entire server message history** (use search_server_messages)
 - Create/edit/delete channels and categories
 - Create/assign/remove roles
 - Send messages to channels
 - Pin/delete messages
 - Kick/ban/timeout members
+- **Long-term memory**: remember/recall important information across conversations
+- **Scheduled tasks**: create recurring automated tasks
+
+Memory guidelines:
+- Proactively use 'remember' to save important information (server rules, user preferences, decisions, recurring topics).
+- Use 'recall' at the start of complex requests to check if you have relevant stored knowledge.
+- Categories: server_rules, user_preferences, decisions, facts, todo, project_info
 
 Rules:
 1. Always explain what you're about to do before taking destructive actions (delete, kick, ban).
@@ -40,6 +49,10 @@ Rules:
 4. Be concise but informative.
 5. If a request is ambiguous, ask for clarification.
 6. Report results after each action.
+7. When asked about past events, search the message archive first.
+8. Proactively remember important context from conversations.
+
+{memories_context}
 """
 
 
@@ -53,12 +66,21 @@ class AgentCog(commands.Cog):
         self.model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
         log.info(f"Using model: {self.model}")
 
-    def _build_system_prompt(self, message: discord.Message) -> str:
+    async def _build_system_prompt(self, message) -> str:
+        memories_context = ""
+        if hasattr(message, "guild") and message.guild:
+            recent = await self.bot.db.recall(str(message.guild.id), limit=10)
+            if recent:
+                lines = ["Relevant memories:"]
+                for m in recent:
+                    lines.append(f"- [{m['category']}] {m['key']}: {m['content'][:150]}")
+                memories_context = "\n".join(lines)
         return SYSTEM_PROMPT_TEMPLATE.format(
             server_name=message.guild.name if message.guild else "DM",
             member_count=message.guild.member_count if message.guild else 1,
             channel_name=message.channel.name if hasattr(message.channel, "name") else "DM",
             user_name=message.author.display_name,
+            memories_context=memories_context,
         )
 
     async def _run_agent(self, message: discord.Message, user_input: str) -> str:
@@ -68,7 +90,7 @@ class AgentCog(commands.Cog):
 
         # Build messages from history
         history = await self.bot.db.get_history(channel_id, limit=30)
-        system_prompt = self._build_system_prompt(message)
+        system_prompt = await self._build_system_prompt(message)
 
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
@@ -138,7 +160,13 @@ class AgentCog(commands.Cog):
                 else:
                     try:
                         log.info(f"Executing tool: {tool_name}({tool_args})")
-                        result = await executor(guild, **tool_args)
+                        result = await executor(
+                            guild,
+                            db=self.bot.db,
+                            channel_id=channel_id,
+                            user_name=message.author.display_name,
+                            **tool_args,
+                        )
                     except Exception as e:
                         result = f"Error executing {tool_name}: {e}"
                         log.error(f"Tool error: {tool_name}: {traceback.format_exc()}")

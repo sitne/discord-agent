@@ -494,3 +494,241 @@ async def timeout_member(guild: Guild, username: str, duration_minutes: int, rea
         return f"Member '{username}' not found."
     await member.timeout(timedelta(minutes=duration_minutes), reason=reason)
     return f"Timed out {member.display_name} for {duration_minutes} minutes."
+
+
+# ---------------------------------------------------------------------------
+# Server message search (requires db access)
+# ---------------------------------------------------------------------------
+@tool(
+    "search_server_messages",
+    "Search through archived server message history. Use this to find past conversations, decisions, or information shared in the server.",
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query (keywords)"},
+            "channel_name": {"type": "string", "description": "Filter by channel name (optional)"},
+            "author_name": {"type": "string", "description": "Filter by author name (optional)"},
+            "limit": {"type": "integer", "description": "Max results (default 15, max 30)"},
+        },
+        "required": ["query"],
+    },
+)
+async def search_server_messages(guild: Guild, query: str, channel_name: str = None, author_name: str = None, limit: int = 15, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    limit = min(limit, 30)
+    results = await db.search_messages(
+        guild_id=str(guild.id), query=query, channel_name=channel_name, author_name=author_name, limit=limit,
+    )
+    if not results:
+        return f"No messages found for '{query}'."
+    from datetime import datetime, timezone
+    lines = [f"**Search results for '{query}'** ({len(results)} hits):"]
+    for r in results:
+        ts = datetime.fromtimestamp(r["timestamp"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+        lines.append(f"[{ts}] **#{r['channel']}** {r['author']}: {r['content'][:150]}")
+    return "\n".join(lines)
+
+
+@tool(
+    "get_archive_stats",
+    "Get statistics about the archived message history.",
+    {"type": "object", "properties": {}, "required": []},
+)
+async def get_archive_stats(guild: Guild, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    stats = await db.get_archive_stats(str(guild.id))
+    from datetime import datetime, timezone
+    oldest = datetime.fromtimestamp(stats["oldest"], tz=timezone.utc).strftime("%Y-%m-%d") if stats["oldest"] else "N/A"
+    newest = datetime.fromtimestamp(stats["newest"], tz=timezone.utc).strftime("%Y-%m-%d") if stats["newest"] else "N/A"
+    return f"**Archived Messages:** {stats['total_messages']:,}\n**Oldest:** {oldest}\n**Newest:** {newest}"
+
+
+# ---------------------------------------------------------------------------
+# Structured Memory
+# ---------------------------------------------------------------------------
+@tool(
+    "remember",
+    "Store important information in long-term memory. Use this proactively to remember server rules, user preferences, decisions, or any important context.",
+    {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "description": "Category (e.g. 'server_rules', 'user_preferences', 'decisions', 'facts', 'todo')",
+            },
+            "key": {"type": "string", "description": "Short identifier for this memory (used for updates)"},
+            "content": {"type": "string", "description": "The information to remember"},
+        },
+        "required": ["category", "key", "content"],
+    },
+)
+async def remember(guild: Guild, category: str, key: str, content: str, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    user = kwargs.get("user_name", "unknown")
+    await db.remember(str(guild.id), category, key, content, created_by=user)
+    return f"Remembered [{category}] '{key}': {content[:100]}..."
+
+
+@tool(
+    "recall",
+    "Search long-term memory for previously stored information.",
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query (optional if category is given)"},
+            "category": {"type": "string", "description": "Filter by category (optional)"},
+        },
+        "required": [],
+    },
+)
+async def recall(guild: Guild, query: str = None, category: str = None, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    memories = await db.recall(str(guild.id), query=query, category=category)
+    if not memories:
+        return "No memories found."
+    lines = [f"**Memories** ({len(memories)} found):"]
+    for m in memories:
+        lines.append(f"[{m['category']}] **{m['key']}** (id:{m['id']}): {m['content'][:200]}")
+    return "\n".join(lines)
+
+
+@tool(
+    "forget",
+    "Delete a specific memory by its ID.",
+    {
+        "type": "object",
+        "properties": {
+            "memory_id": {"type": "integer", "description": "Memory ID to delete"},
+        },
+        "required": ["memory_id"],
+    },
+)
+async def forget(guild: Guild, memory_id: int, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    ok = await db.forget(str(guild.id), memory_id)
+    return f"Memory {memory_id} deleted." if ok else f"Memory {memory_id} not found."
+
+
+@tool(
+    "list_memory_categories",
+    "List all memory categories.",
+    {"type": "object", "properties": {}, "required": []},
+)
+async def list_memory_categories(guild: Guild, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    cats = await db.get_memory_categories(str(guild.id))
+    return "**Memory categories:** " + ", ".join(cats) if cats else "No memories stored yet."
+
+
+# ---------------------------------------------------------------------------
+# Scheduled Tasks
+# ---------------------------------------------------------------------------
+@tool(
+    "create_scheduled_task",
+    "Create a scheduled task that runs automatically. The task prompt will be executed by the AI on the specified schedule.",
+    {
+        "type": "object",
+        "properties": {
+            "task_name": {"type": "string", "description": "Short name for the task"},
+            "task_prompt": {"type": "string", "description": "The prompt/instruction to execute each run"},
+            "schedule": {
+                "type": "string",
+                "description": "Cron expression (e.g. '0 9 * * *' for daily 9am UTC) or preset (@hourly, @daily, @weekly, @monthly)",
+            },
+        },
+        "required": ["task_name", "task_prompt", "schedule"],
+    },
+)
+async def create_scheduled_task(guild: Guild, task_name: str, task_prompt: str, schedule: str, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    from cron_parser import next_cron_time, describe_cron
+    try:
+        next_run = next_cron_time(schedule)
+    except ValueError as e:
+        return f"Invalid schedule: {e}"
+    channel_id = kwargs.get("channel_id", "0")
+    user_name = kwargs.get("user_name", "unknown")
+    task_id = await db.create_task(
+        guild_id=str(guild.id), channel_id=channel_id, created_by=user_name,
+        task_name=task_name, task_prompt=task_prompt, cron_expression=schedule, next_run_at=next_run,
+    )
+    from datetime import datetime, timezone
+    next_dt = datetime.fromtimestamp(next_run, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return f"Created task #{task_id} '{task_name}'\nSchedule: {describe_cron(schedule)}\nNext run: {next_dt}"
+
+
+@tool(
+    "list_scheduled_tasks",
+    "List all scheduled tasks for this server.",
+    {"type": "object", "properties": {}, "required": []},
+)
+async def list_scheduled_tasks(guild: Guild, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    tasks = await db.list_tasks(str(guild.id))
+    if not tasks:
+        return "No scheduled tasks."
+    from datetime import datetime, timezone
+    from cron_parser import describe_cron
+    lines = ["**Scheduled Tasks:**"]
+    for t in tasks:
+        status = "✅" if t["enabled"] else "❌"
+        next_dt = datetime.fromtimestamp(t["next_run"], tz=timezone.utc).strftime("%m/%d %H:%M") if t["next_run"] else "N/A"
+        lines.append(f"{status} **#{t['id']} {t['name']}** — {describe_cron(t['cron'])} — Next: {next_dt}")
+        lines.append(f"   Prompt: {t['prompt'][:100]}")
+    return "\n".join(lines)
+
+
+@tool(
+    "delete_scheduled_task",
+    "Delete a scheduled task by ID.",
+    {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "integer", "description": "Task ID to delete"},
+        },
+        "required": ["task_id"],
+    },
+)
+async def delete_scheduled_task(guild: Guild, task_id: int, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    ok = await db.delete_task(str(guild.id), task_id)
+    return f"Task #{task_id} deleted." if ok else f"Task #{task_id} not found."
+
+
+@tool(
+    "toggle_scheduled_task",
+    "Enable or disable a scheduled task.",
+    {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "integer", "description": "Task ID"},
+            "enabled": {"type": "boolean", "description": "True to enable, False to disable"},
+        },
+        "required": ["task_id", "enabled"],
+    },
+)
+async def toggle_scheduled_task(guild: Guild, task_id: int, enabled: bool, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    ok = await db.toggle_task(str(guild.id), task_id, enabled)
+    state = "enabled" if enabled else "disabled"
+    return f"Task #{task_id} {state}." if ok else f"Task #{task_id} not found."

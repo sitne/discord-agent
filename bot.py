@@ -48,8 +48,9 @@ async def main():
     bot.db = await Database.create()
 
     # Load cogs
-    await bot.load_extension("cogs.agent")
-    log.info("Loaded cogs.agent")
+    for ext in ["cogs.collector", "cogs.agent", "cogs.scheduler"]:
+        await bot.load_extension(ext)
+        log.info(f"Loaded {ext}")
 
     token = os.getenv("DISCORD_TOKEN")
     if not token:
