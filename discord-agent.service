@@ -1,0 +1,15 @@
+[Unit]
+Description=Discord AI Agent Bot
+After=network.target
+
+[Service]
+Type=simple
+User=exedev
+WorkingDirectory=/home/exedev/discord-agent
+ExecStart=/home/exedev/discord-agent/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/home/exedev/discord-agent/.env
+
+[Install]
+WantedBy=multi-user.target
