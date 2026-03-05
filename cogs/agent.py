@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import re
 import traceback
 
 import discord
@@ -71,14 +72,55 @@ class AgentCog(commands.Cog):
         self.model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
         log.info(f"Using model: {self.model}")
 
-    async def _build_system_prompt(self, message) -> str:
+    @staticmethod
+    def _extract_keywords(text: str) -> str:
+        """Extract meaningful keywords from user message for memory search."""
+        # Remove mentions, URLs, and special chars
+        text = re.sub(r'<@!?\d+>', '', text)
+        text = re.sub(r'https?://\S+', '', text)
+        text = re.sub(r'[^\w\s]', ' ', text)
+        # Filter out very short / stop words
+        stop = {'the','a','an','is','are','was','were','be','been','being','have','has','had',
+                'do','does','did','will','would','could','should','may','might','shall','can',
+                'to','of','in','for','on','with','at','by','from','as','into','about','between',
+                'through','after','before','during','it','its','this','that','these','those',
+                'i','me','my','we','our','you','your','he','she','they','them','his','her',
+                'what','which','who','whom','how','when','where','why','not','no','yes',
+                'and','or','but','if','then','so','just','also','very','really','please'}
+        words = [w for w in text.lower().split() if len(w) > 2 and w not in stop]
+        return ' '.join(words[:15])  # cap at 15 keywords
+
+    async def _build_system_prompt(self, message, user_input: str = "") -> str:
         memories_context = ""
         if hasattr(message, "guild") and message.guild:
-            recent = await self.bot.db.recall(str(message.guild.id), limit=10)
-            if recent:
+            guild_id = str(message.guild.id)
+            seen_ids = set()
+            all_memories = []
+
+            # 1) Get memories relevant to the user's message via FTS
+            keywords = self._extract_keywords(user_input)
+            if keywords:
+                relevant = await self.bot.db.recall_relevant(guild_id, keywords, limit=5)
+                for m in relevant:
+                    if m['id'] not in seen_ids:
+                        seen_ids.add(m['id'])
+                        all_memories.append(m)
+
+            # 2) Get most recent memories
+            recent = await self.bot.db.recall(guild_id, limit=5)
+            for m in recent:
+                if m['id'] not in seen_ids:
+                    seen_ids.add(m['id'])
+                    all_memories.append(m)
+
+            # Cap at 10 total
+            all_memories = all_memories[:10]
+
+            if all_memories:
                 lines = ["Relevant memories:"]
-                for m in recent:
-                    lines.append(f"- [{m['category']}] {m['key']}: {m['content'][:150]}")
+                for m in all_memories:
+                    imp = f" [importance:{m.get('importance', 5)}]" if m.get('importance', 5) != 5 else ""
+                    lines.append(f"- [{m['category']}] {m['key']}: {m['content'][:300]}{imp}")
                 memories_context = "\n".join(lines)
         return SYSTEM_PROMPT_TEMPLATE.format(
             server_name=message.guild.name if message.guild else "DM",
@@ -95,7 +137,7 @@ class AgentCog(commands.Cog):
 
         # Build messages from history
         history = await self.bot.db.get_history(channel_id, limit=30)
-        system_prompt = await self._build_system_prompt(message)
+        system_prompt = await self._build_system_prompt(message, user_input)
 
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)

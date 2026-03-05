@@ -562,41 +562,55 @@ async def get_archive_stats(guild: Guild, **kwargs) -> str:
             },
             "key": {"type": "string", "description": "Short identifier for this memory (used for updates)"},
             "content": {"type": "string", "description": "The information to remember"},
+            "importance": {
+                "type": "integer",
+                "description": "Importance score 1-10 (default 5). Use 8-10 for critical info like rules/decisions, 1-3 for minor notes.",
+            },
         },
         "required": ["category", "key", "content"],
     },
 )
-async def remember(guild: Guild, category: str, key: str, content: str, **kwargs) -> str:
+async def remember(guild: Guild, category: str, key: str, content: str, importance: int = 5, **kwargs) -> str:
     db = kwargs.get("db")
     if not db:
         return "Database not available."
     user = kwargs.get("user_name", "unknown")
-    await db.remember(str(guild.id), category, key, content, created_by=user)
-    return f"Remembered [{category}] '{key}': {content[:100]}..."
+    await db.remember(str(guild.id), category, key, content, created_by=user, importance=importance)
+    return f"Remembered [{category}] '{key}' (importance:{importance}): {content[:100]}..."
 
 
 @tool(
     "recall",
-    "Search long-term memory for previously stored information.",
+    "Search long-term memory for previously stored information. Uses word-based matching (each word is searched independently).",
     {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Search query (optional if category is given)"},
+            "query": {"type": "string", "description": "Search query - individual words are matched (optional if category is given)"},
             "category": {"type": "string", "description": "Filter by category (optional)"},
+            "limit": {"type": "integer", "description": "Max results to return (default 10, max 50)"},
         },
         "required": [],
     },
 )
-async def recall(guild: Guild, query: str = None, category: str = None, **kwargs) -> str:
+async def recall(guild: Guild, query: str = None, category: str = None, limit: int = 10, **kwargs) -> str:
     db = kwargs.get("db")
     if not db:
         return "Database not available."
-    memories = await db.recall(str(guild.id), query=query, category=category)
+    limit = max(1, min(limit, 50))
+    # If query provided, use relevance-based search
+    if query:
+        memories = await db.recall_relevant(str(guild.id), query, limit=limit)
+        # Fall back to basic recall if FTS returns nothing
+        if not memories:
+            memories = await db.recall(str(guild.id), query=query, category=category, limit=limit)
+    else:
+        memories = await db.recall(str(guild.id), query=None, category=category, limit=limit)
     if not memories:
         return "No memories found."
     lines = [f"**Memories** ({len(memories)} found):"]
     for m in memories:
-        lines.append(f"[{m['category']}] **{m['key']}** (id:{m['id']}): {m['content'][:200]}")
+        imp = f" ⭐{m.get('importance', 5)}" if m.get('importance', 5) != 5 else ""
+        lines.append(f"[{m['category']}] **{m['key']}** (id:{m['id']}){imp}: {m['content'][:200]}")
     return "\n".join(lines)
 
 
@@ -617,6 +631,26 @@ async def forget(guild: Guild, memory_id: int, **kwargs) -> str:
         return "Database not available."
     ok = await db.forget(str(guild.id), memory_id)
     return f"Memory {memory_id} deleted." if ok else f"Memory {memory_id} not found."
+
+
+@tool(
+    "forget_by_key",
+    "Delete a memory by its category and key name (more intuitive than using ID).",
+    {
+        "type": "object",
+        "properties": {
+            "category": {"type": "string", "description": "Memory category"},
+            "key": {"type": "string", "description": "Memory key to delete"},
+        },
+        "required": ["category", "key"],
+    },
+)
+async def forget_by_key(guild: Guild, category: str, key: str, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    ok = await db.forget_by_key(str(guild.id), category, key)
+    return f"Memory [{category}] '{key}' deleted." if ok else f"Memory [{category}] '{key}' not found."
 
 
 @tool(
@@ -732,3 +766,51 @@ async def toggle_scheduled_task(guild: Guild, task_id: int, enabled: bool, **kwa
     ok = await db.toggle_task(str(guild.id), task_id, enabled)
     state = "enabled" if enabled else "disabled"
     return f"Task #{task_id} {state}." if ok else f"Task #{task_id} not found."
+
+
+@tool(
+    "get_task_history",
+    "Show recent execution history for a scheduled task, including status, errors, and timing.",
+    {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "integer", "description": "Task ID to get history for"},
+            "limit": {"type": "integer", "description": "Number of recent executions to show (default 10, max 25)"},
+        },
+        "required": ["task_id"],
+    },
+)
+async def get_task_history(guild: Guild, task_id: int, limit: int = 10, **kwargs) -> str:
+    db = kwargs.get("db")
+    if not db:
+        return "Database not available."
+    limit = min(limit, 25)
+    history = await db.get_task_execution_history(task_id, limit=limit)
+    if not history:
+        return f"No execution history for task #{task_id}."
+
+    from datetime import datetime, timezone
+    status_icons = {
+        "success": "\u2705",
+        "error": "\u274c",
+        "error_retryable": "\u26a0\ufe0f",
+        "timeout": "\u23f0",
+        "running": "\u23f3",
+    }
+    lines = [f"**Execution history for task #{task_id}** (last {len(history)}):\n"]
+    for ex in history:
+        icon = status_icons.get(ex["status"], "\u2753")
+        started = datetime.fromtimestamp(ex["started_at"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        duration = ""
+        if ex["completed_at"]:
+            dur_secs = ex["completed_at"] - ex["started_at"]
+            duration = f" ({dur_secs:.1f}s)"
+        line = f"{icon} **{ex['status']}** — {started} UTC{duration}"
+        if ex["error_message"]:
+            line += f"\n   Error: `{ex['error_message'][:150]}`"
+        if ex["result_summary"]:
+            line += f"\n   Result: {ex['result_summary'][:150]}"
+        if ex["retry_count"]:
+            line += f" (retry #{ex['retry_count']})"
+        lines.append(line)
+    return "\n".join(lines)

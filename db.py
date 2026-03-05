@@ -154,7 +154,63 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_tasks_next_run
                 ON scheduled_tasks(enabled, next_run_at);
+
+            -- ====================
+            -- Task Executions
+            -- ====================
+            CREATE TABLE IF NOT EXISTS task_executions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                started_at REAL NOT NULL,
+                completed_at REAL,
+                tokens_used INTEGER DEFAULT 0,
+                tool_calls_count INTEGER DEFAULT 0,
+                error_message TEXT,
+                result_summary TEXT,
+                retry_count INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_executions_task
+                ON task_executions(task_id, started_at DESC);
         """)
+        await self.conn.commit()
+        await self._migrate_memories()
+        await self._migrate_scheduled_tasks()
+
+    async def _migrate_memories(self):
+        """Add new columns to memories table if they don't exist (safe for existing DBs)."""
+        # Check which columns already exist
+        cursor = await self.conn.execute("PRAGMA table_info(memories)")
+        existing = {row[1] for row in await cursor.fetchall()}
+        migrations = [
+            ("importance", "INTEGER NOT NULL DEFAULT 5"),
+            ("access_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_accessed_at", "REAL"),
+            ("user_id", "TEXT"),
+        ]
+        for col_name, col_def in migrations:
+            if col_name not in existing:
+                await self.conn.execute(
+                    f"ALTER TABLE memories ADD COLUMN {col_name} {col_def}"
+                )
+        await self.conn.commit()
+
+    async def _migrate_scheduled_tasks(self):
+        """Add retry_count and max_retries columns to scheduled_tasks if they don't exist."""
+        cursor = await self.conn.execute("PRAGMA table_info(scheduled_tasks)")
+        existing = {row[1] for row in await cursor.fetchall()}
+        migrations = [
+            ("retry_count", "INTEGER DEFAULT 0"),
+            ("max_retries", "INTEGER DEFAULT 3"),
+        ]
+        for col_name, col_def in migrations:
+            if col_name not in existing:
+                try:
+                    await self.conn.execute(
+                        f"ALTER TABLE scheduled_tasks ADD COLUMN {col_name} {col_def}"
+                    )
+                except Exception:
+                    pass
         await self.conn.commit()
 
     # ---------------------------------------------------------------
@@ -336,18 +392,21 @@ class Database:
     # Structured Memory
     # ---------------------------------------------------------------
     async def remember(
-        self, guild_id: str, category: str, key: str, content: str, created_by: str = None
+        self, guild_id: str, category: str, key: str, content: str,
+        created_by: str = None, importance: int = 5,
     ):
-        """Store or update a memory."""
+        """Store or update a memory with importance scoring (1-10)."""
+        importance = max(1, min(10, importance))
         now = time.time()
         await self.conn.execute(
             """
-            INSERT INTO memories (guild_id, category, key, content, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO memories (guild_id, category, key, content, created_by, created_at, updated_at, importance)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id, category, key)
-            DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
+            DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at,
+                         importance = excluded.importance
             """,
-            (guild_id, category, key, content, created_by, now, now),
+            (guild_id, category, key, content, created_by, now, now, importance),
         )
         await self.conn.commit()
 
@@ -391,10 +450,72 @@ class Database:
             for r in rows
         ]
 
+    async def recall_relevant(self, guild_id: str, query: str, limit: int = 5) -> list[dict]:
+        """FTS5 search with word-based OR tokens and hybrid BM25 scoring.
+        Updates access_count and last_accessed_at on returned memories."""
+        if not query or not query.strip():
+            return []
+
+        # Split query into individual word tokens joined by OR for broader matching
+        words = [w.strip() for w in query.split() if w.strip()]
+        if not words:
+            return []
+        # Escape each word for FTS5 safety and join with OR
+        safe_words = []
+        for w in words:
+            safe = w.replace('"', '""')
+            safe_words.append(f'"{safe}"')
+        fts_query = " OR ".join(safe_words)
+
+        cursor = await self.conn.execute(
+            """
+            SELECT m.id, m.category, m.key, m.content, m.created_by, m.updated_at,
+                   m.importance, m.access_count, rank
+            FROM memory_fts f
+            JOIN memories m ON m.id = f.rowid
+            WHERE f.memory_fts MATCH ? AND m.guild_id = ?
+            ORDER BY (rank * -1.0) * (m.importance / 5.0) DESC
+            LIMIT ?
+            """,
+            (fts_query, guild_id, limit),
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return []
+
+        # Update access stats for returned memories
+        now = time.time()
+        ids = [r[0] for r in rows]
+        placeholders = ",".join("?" for _ in ids)
+        await self.conn.execute(
+            f"UPDATE memories SET access_count = access_count + 1, last_accessed_at = ? "
+            f"WHERE id IN ({placeholders})",
+            [now] + ids,
+        )
+        await self.conn.commit()
+
+        return [
+            {
+                "id": r[0], "category": r[1], "key": r[2], "content": r[3],
+                "created_by": r[4], "updated_at": r[5], "importance": r[6],
+                "access_count": r[7],
+            }
+            for r in rows
+        ]
+
     async def forget(self, guild_id: str, memory_id: int) -> bool:
         cursor = await self.conn.execute(
             "DELETE FROM memories WHERE id = ? AND guild_id = ?",
             (memory_id, guild_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def forget_by_key(self, guild_id: str, category: str, key: str) -> bool:
+        """Delete a memory by category + key."""
+        cursor = await self.conn.execute(
+            "DELETE FROM memories WHERE guild_id = ? AND category = ? AND key = ?",
+            (guild_id, category, key),
         )
         await self.conn.commit()
         return cursor.rowcount > 0
@@ -479,6 +600,92 @@ class Database:
         cursor = await self.conn.execute(
             "UPDATE scheduled_tasks SET enabled = ? WHERE id = ? AND guild_id = ?",
             (1 if enabled else 0, task_id, guild_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    # ---------------------------------------------------------------
+    # Task Executions
+    # ---------------------------------------------------------------
+    async def start_task_execution(self, task_id: int) -> int:
+        """Insert a new execution row with status='running', return its id."""
+        cursor = await self.conn.execute(
+            "INSERT INTO task_executions (task_id, status, started_at) VALUES (?, 'running', ?)",
+            (task_id, time.time()),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid
+
+    async def complete_task_execution(
+        self,
+        execution_id: int,
+        status: str,
+        result_summary: Optional[str] = None,
+        error_message: Optional[str] = None,
+        tokens: int = 0,
+        tool_calls: int = 0,
+    ):
+        """Update an execution row with completion info."""
+        await self.conn.execute(
+            "UPDATE task_executions SET status = ?, completed_at = ?, "
+            "result_summary = ?, error_message = ?, tokens_used = ?, tool_calls_count = ? "
+            "WHERE id = ?",
+            (status, time.time(), result_summary, error_message, tokens, tool_calls, execution_id),
+        )
+        await self.conn.commit()
+
+    async def get_task_execution_history(self, task_id: int, limit: int = 10) -> list[dict]:
+        """Get recent executions for a task."""
+        cursor = await self.conn.execute(
+            "SELECT id, task_id, status, started_at, completed_at, tokens_used, "
+            "tool_calls_count, error_message, result_summary, retry_count "
+            "FROM task_executions WHERE task_id = ? ORDER BY started_at DESC LIMIT ?",
+            (task_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r[0], "task_id": r[1], "status": r[2], "started_at": r[3],
+                "completed_at": r[4], "tokens_used": r[5], "tool_calls_count": r[6],
+                "error_message": r[7], "result_summary": r[8], "retry_count": r[9],
+            }
+            for r in rows
+        ]
+
+    async def increment_task_retry(self, task_id: int) -> int:
+        """Increment retry_count for a task and return the new count."""
+        await self.conn.execute(
+            "UPDATE scheduled_tasks SET retry_count = COALESCE(retry_count, 0) + 1 WHERE id = ?",
+            (task_id,),
+        )
+        await self.conn.commit()
+        cursor = await self.conn.execute(
+            "SELECT retry_count FROM scheduled_tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def reset_task_retry(self, task_id: int):
+        """Reset retry_count to 0."""
+        await self.conn.execute(
+            "UPDATE scheduled_tasks SET retry_count = 0 WHERE id = ?",
+            (task_id,),
+        )
+        await self.conn.commit()
+
+    async def claim_task(self, task_id: int) -> bool:
+        """Atomically claim a task to prevent double-run.
+
+        Sets next_run_at to a far-future sentinel value only if the task
+        is currently due (next_run_at <= now).  Returns True if the claim
+        succeeded (this caller should execute it).
+        """
+        now = time.time()
+        cursor = await self.conn.execute(
+            "UPDATE scheduled_tasks SET next_run_at = 9999999999 "
+            "WHERE id = ? AND enabled = 1 AND next_run_at <= ?",
+            (task_id, now),
         )
         await self.conn.commit()
         return cursor.rowcount > 0
