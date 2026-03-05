@@ -1,5 +1,7 @@
 # 🤖 discord-agent
 
+**[日本語](README.ja.md)**
+
 A Discord bot that acts as an autonomous AI agent with 45 tools, long-term memory, a cron-based task scheduler, and web capabilities. Powered by any LLM on [OpenRouter](https://openrouter.ai) (default: Gemini 2.5 Flash).
 
 ~3,600 lines of Python across 12 files. Built with [discord.py](https://github.com/Rapptz/discord.py).
