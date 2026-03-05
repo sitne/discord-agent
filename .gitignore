@@ -4,3 +4,4 @@ __pycache__/
 data/
 *.db
 .venv/
+mcp_servers.json

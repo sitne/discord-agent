@@ -8,7 +8,7 @@
     "filesystem": {
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/exedev"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
     },
     "memory": {
       "transport": "stdio",
