@@ -114,10 +114,10 @@ async def web_search(guild: Guild, query: str, max_results: int = 5, region: str
     await _search_limiter.wait()
 
     def _search():
-        params = {"keywords": query, "max_results": max_results}
+        params = {"max_results": max_results}
         if region:
             params["region"] = region
-        return DDGS().text(**params)
+        return DDGS().text(query, **params)
 
     results = await asyncio.to_thread(_search)
     if not results:
@@ -153,7 +153,7 @@ async def web_news(guild: Guild, query: str, max_results: int = 5, **kwargs) -> 
     await _search_limiter.wait()
 
     def _search():
-        return DDGS().news(keywords=query, max_results=max_results)
+        return DDGS().news(query, max_results=max_results)
 
     results = await asyncio.to_thread(_search)
     if not results:
