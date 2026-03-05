@@ -8,6 +8,12 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from db import Database
+from mcp_manager import MCPManager
+
+# Import tool modules to register tools
+import tools         # noqa: F401 - Discord management tools
+import tools_web     # noqa: F401 - Web search, reading, screenshots
+import tools_system  # noqa: F401 - Shell, GitHub CLI
 
 load_dotenv()
 
@@ -33,7 +39,6 @@ def create_bot() -> commands.Bot:
     async def on_ready():
         log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
         log.info(f"Guilds: {[g.name for g in bot.guilds]}")
-        # Sync slash commands
         try:
             synced = await bot.tree.sync()
             log.info(f"Synced {len(synced)} slash commands")
@@ -47,6 +52,10 @@ async def main():
     bot = create_bot()
     bot.db = await Database.create()
 
+    # Initialize MCP
+    bot.mcp = MCPManager()
+    await bot.mcp.start()
+
     # Load cogs
     for ext in ["cogs.collector", "cogs.agent", "cogs.scheduler"]:
         await bot.load_extension(ext)
@@ -57,8 +66,11 @@ async def main():
         log.error("DISCORD_TOKEN not set in .env")
         return
 
-    async with bot:
-        await bot.start(token)
+    try:
+        async with bot:
+            await bot.start(token)
+    finally:
+        await bot.mcp.close()
 
 
 if __name__ == "__main__":

@@ -2,3 +2,12 @@ discord.py>=2.4.0
 openai>=1.40.0
 aiosqlite>=0.20.0
 python-dotenv>=1.0.0
+# Web search & reading
+ddgs>=9.0.0
+trafilatura>=2.0.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+# Screenshots
+playwright>=1.40.0
+# MCP
+mcp[cli]>=1.0.0

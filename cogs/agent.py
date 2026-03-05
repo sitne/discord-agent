@@ -36,6 +36,11 @@ Capabilities:
 - Kick/ban/timeout members
 - **Long-term memory**: remember/recall important information across conversations
 - **Scheduled tasks**: create recurring automated tasks
+- **Web search**: search the internet and read web pages
+- **Screenshots**: capture webpage screenshots
+- **GitHub**: manage repos, issues, PRs via gh CLI
+- **Shell commands**: run system commands on the host
+- **MCP tools**: additional capabilities from connected MCP servers
 
 Memory guidelines:
 - Proactively use 'remember' to save important information (server rules, user preferences, decisions, recurring topics).
@@ -100,6 +105,9 @@ class AgentCog(commands.Cog):
         await self.bot.db.add_message(channel_id, "user", user_input)
 
         tool_specs = get_tool_specs()
+        # Add MCP tools
+        if hasattr(self.bot, 'mcp'):
+            tool_specs = tool_specs + self.bot.mcp.get_tool_specs()
 
         for round_num in range(MAX_TOOL_ROUNDS):
             try:
@@ -154,22 +162,31 @@ class AgentCog(commands.Cog):
                 except json.JSONDecodeError:
                     tool_args = {}
 
-                executor = get_tool_executor(tool_name)
-                if not executor:
-                    result = f"Unknown tool: {tool_name}"
-                else:
+                # Route to MCP or built-in tool
+                if hasattr(self.bot, 'mcp') and self.bot.mcp.is_mcp_tool(tool_name):
                     try:
-                        log.info(f"Executing tool: {tool_name}({tool_args})")
-                        result = await executor(
-                            guild,
-                            db=self.bot.db,
-                            channel_id=channel_id,
-                            user_name=message.author.display_name,
-                            **tool_args,
-                        )
+                        log.info(f"Executing MCP tool: {tool_name}({tool_args})")
+                        result = await self.bot.mcp.call_tool(tool_name, tool_args)
                     except Exception as e:
-                        result = f"Error executing {tool_name}: {e}"
-                        log.error(f"Tool error: {tool_name}: {traceback.format_exc()}")
+                        result = f"MCP tool error: {e}"
+                        log.error(f"MCP tool error: {tool_name}: {traceback.format_exc()}")
+                else:
+                    executor = get_tool_executor(tool_name)
+                    if not executor:
+                        result = f"Unknown tool: {tool_name}"
+                    else:
+                        try:
+                            log.info(f"Executing tool: {tool_name}({tool_args})")
+                            result = await executor(
+                                guild,
+                                db=self.bot.db,
+                                channel_id=channel_id,
+                                user_name=message.author.display_name,
+                                **tool_args,
+                            )
+                        except Exception as e:
+                            result = f"Error executing {tool_name}: {e}"
+                            log.error(f"Tool error: {tool_name}: {traceback.format_exc()}")
 
                 # Log tool use
                 if guild:
