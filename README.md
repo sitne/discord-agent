@@ -1,69 +1,127 @@
-# Discord AI Agent
+# 🤖 discord-agent
 
-Discordサーバー管理用AIエージェントBot。
-OpenRouter API経由でLLMを呼び出し、tool callingでDiscordサーバーを操作する。
+A Discord bot that acts as an autonomous AI agent with 45 tools, long-term memory, a cron-based task scheduler, and web capabilities. Powered by any LLM on [OpenRouter](https://openrouter.ai) (default: Gemini 2.5 Flash).
 
-## セットアップ
+~3,600 lines of Python across 12 files. Built with [discord.py](https://github.com/Rapptz/discord.py).
 
-### 1. Discord Developer Portal
-1. https://discord.com/developers/applications でアプリ作成
-2. Bot → Reset Token でトークン取得
-3. Bot → Privileged Gateway Intents:
-   - **MESSAGE CONTENT INTENT** ✅
-   - **SERVER MEMBERS INTENT** ✅
-4. OAuth2 → URL Generator:
-   - Scopes: `bot`, `applications.commands`
-   - Bot Permissions: `Administrator` (または個別に設定)
-   - 生成されたURLでサーバーに招待
+## Features
 
-### 2. 環境変数
-```bash
-cp .env.example .env
-# .env を編集してトークンを入力
-```
+- **LLM-powered agent** — Routes through OpenRouter; switch models at runtime with `/model`
+- **45 tools** across 5 categories (Discord, Memory, Scheduler, Web, System)
+- **Long-term memory** — SQLite + FTS5 hybrid search with automatic context injection
+- **Autonomous scheduler** — Cron expressions, retry logic, dead-letter queue, execution history
+- **Web access** — Search, news, page reading (3-tier extraction + caching), and screenshots via Playwright
+- **Conversation compression** — Automatic summarization when context exceeds 20 messages
+- **Safety first** — Permission checks and confirmation buttons for destructive actions
+- **Robust I/O** — API retry with exponential backoff, parallel tool execution, image/text attachment processing
+- **MCP support** — Connect external tool servers via `mcp_servers.json`
 
-### 3. 起動
-```bash
-source .venv/bin/activate
-python bot.py
-```
+## Tools
 
-### 4. systemdで永続化
-```bash
-sudo cp discord-agent.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable discord-agent
-sudo systemctl start discord-agent
-```
+| Category | Count | Tools |
+|---|---|---|
+| **Discord** | 18 | `send_message` `edit_message` `delete_messages` `create_channel` `delete_channel` `rename_channel` `set_channel_topic` `list_channels` `list_members` `get_member_info` `set_nickname` `create_role` `assign_role` `remove_role` `kick_member` `ban_member` `unban_member` `get_server_info` |
+| **Memory** | 5 | `remember` `recall` `forget` `forget_by_key` `list_memory_categories` |
+| **Scheduler** | 5 | `create_scheduled_task` `list_scheduled_tasks` `delete_scheduled_task` `toggle_scheduled_task` `get_task_history` |
+| **Web** | 4 | `web_search` `web_news` `read_webpage` `screenshot_webpage` |
+| **System** | 11 | `run_shell` + 10 GitHub CLI tools |
 
-## 使い方
+## Setup
 
-- `@Bot名 サーバーの情報を教えて` — サーバー情報取得
-- `@Bot名 チャンネル一覧を見せて` — チャンネル一覧
-- `@Bot名 "test" というテキストチャンネルを作って` — チャンネル作成
-- `/ask prompt:ロール一覧を見せて` — スラッシュコマンド
-- `/clear` — 会話履歴クリア
-- `/model name:openai/gpt-4o-mini` — モデル変更
+**Requirements:** Python 3.12+
 
-## ツール一覧
+1. **Clone and install dependencies**
 
-| ツール | 説明 |
+   ```bash
+   git clone https://github.com/sitne/discord-agent.git
+   cd discord-agent
+   pip install -r requirements.txt
+   playwright install chromium
+   ```
+
+2. **Configure environment**
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Edit `.env` and set:
+
+   ```env
+   DISCORD_TOKEN=your-bot-token
+   OPENROUTER_API_KEY=your-api-key
+
+   # Optional: override the default model
+   # OPENROUTER_MODEL=openai/gpt-4o-mini
+   ```
+
+3. **Discord bot setup**
+
+   Create a bot at the [Discord Developer Portal](https://discord.com/developers/applications) with the following **privileged intents** enabled:
+   - Message Content
+   - Server Members
+
+   Invite the bot with permissions for managing channels, roles, messages, and members.
+
+4. **Run**
+
+   ```bash
+   python bot.py
+   ```
+
+## Commands
+
+| Command | Description |
 |---|---|
-| get_server_info | サーバー情報取得 |
-| list_channels | チャンネル一覧 |
-| list_roles | ロール一覧 |
-| get_member_info | メンバー情報 |
-| read_messages | メッセージ読み取り |
-| create_channel | チャンネル作成 |
-| delete_channel | チャンネル削除 |
-| edit_channel | チャンネル編集 |
-| create_category | カテゴリ作成 |
-| create_role | ロール作成 |
-| assign_role | ロール付与 |
-| remove_role | ロール削除 |
-| send_message | メッセージ送信 |
-| pin_message | メッセージピン留め |
-| delete_messages | メッセージ一括削除 |
-| kick_member | キック |
-| ban_member | BAN |
-| timeout_member | タイムアウト |
+| `/ask` | Send a prompt to the agent (supports an optional image attachment) |
+| `/model` | View or switch the active LLM (e.g. `google/gemini-2.5-flash`, `openai/gpt-4o-mini`) |
+
+## 📂 Project Structure
+
+```
+bot.py                  Entry point and bot initialization
+db.py                   SQLite database, memory store, FTS5 search
+tools.py                Discord management tools (18)
+tools_web.py            Web search, reading, and screenshots
+tools_system.py         Shell execution and GitHub CLI tools
+tools_permissions.py    Permission checks and confirmation gates
+context_manager.py      Conversation history and compression
+cron_parser.py          Cron expression parser
+mcp_manager.py          MCP server lifecycle and tool routing
+cogs/
+  agent.py              Core agent loop, LLM calls, tool dispatch
+  collector.py          Message and attachment collection
+  scheduler.py          Cron scheduler, retry, DLQ, history
+```
+
+## MCP Servers
+
+To connect external [Model Context Protocol](https://modelcontextprotocol.io/) tool servers, create a `mcp_servers.json` in the project root:
+
+```json
+{
+  "servers": [
+    {
+      "name": "example",
+      "command": "npx",
+      "args": ["-y", "@example/mcp-server"]
+    }
+  ]
+}
+```
+
+MCP tools are automatically discovered and made available to the agent alongside built-in tools.
+
+## Dependencies
+
+- [discord.py](https://github.com/Rapptz/discord.py) — Discord API
+- [openai](https://github.com/openai/openai-python) — OpenRouter-compatible LLM client
+- [aiosqlite](https://github.com/omnilib/aiosqlite) — Async SQLite + FTS5
+- [ddgs](https://github.com/deedy5/duckduckgo_search) — Web search
+- [trafilatura](https://github.com/adbar/trafilatura) + [beautifulsoup4](https://www.crummy.com/software/BeautifulSoup/) — Content extraction
+- [playwright](https://playwright.dev/python/) — Page screenshots
+- [mcp](https://github.com/modelcontextprotocol/python-sdk) — MCP client
+
+## License
+
+MIT
