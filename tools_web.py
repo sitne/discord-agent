@@ -122,11 +122,20 @@ async def web_search(guild: Guild, query: str, max_results: int = 5, region: str
     results = await asyncio.to_thread(_search)
     if not results:
         return f"No results found for '{query}'."
-    lines = [f"**Web search: '{query}'** ({len(results)} results):"]
+    lines = [f"Web search: '{query}' ({len(results)} results)"]
+    lines.append("")
     for i, r in enumerate(results, 1):
-        lines.append(f"{i}. **{r.get('title', 'No title')}**")
-        lines.append(f"   {r.get('href', '')}")
-        lines.append(f"   {r.get('body', '')[:400]}")
+        title = r.get('title', 'No title')
+        url = r.get('href', '')
+        body = r.get('body', '')[:400]
+        lines.append(f"[{i}] {title}")
+        lines.append(f"    URL: {url}")
+        lines.append(f"    {body}")
+        lines.append("")
+    lines.append("---")
+    lines.append("Sources:")
+    for i, r in enumerate(results, 1):
+        lines.append(f"[{i}] {r.get('href', '')}")
     response = "\n".join(lines)
     _search_cache.set(cache_key, response)
     return response
@@ -158,13 +167,23 @@ async def web_news(guild: Guild, query: str, max_results: int = 5, **kwargs) -> 
     results = await asyncio.to_thread(_search)
     if not results:
         return f"No news found for '{query}'."
-    lines = [f"**News: '{query}'** ({len(results)} articles):"]
+    lines = [f"News: '{query}' ({len(results)} articles)"]
+    lines.append("")
     for i, r in enumerate(results, 1):
-        lines.append(f"{i}. **{r.get('title', '')}**")
-        lines.append(f"   {r.get('url', '')}")
-        lines.append(f"   {r.get('body', '')[:400]}")
-        if r.get("date"):
-            lines.append(f"   Published: {r['date']}")
+        title = r.get('title', '')
+        url = r.get('url', '')
+        body = r.get('body', '')[:400]
+        date = r.get('date', '')
+        lines.append(f"[{i}] {title}")
+        lines.append(f"    URL: {url}")
+        if date:
+            lines.append(f"    Date: {date}")
+        lines.append(f"    {body}")
+        lines.append("")
+    lines.append("---")
+    lines.append("Sources:")
+    for i, r in enumerate(results, 1):
+        lines.append(f"[{i}] {r.get('url', '')}")
     return "\n".join(lines)
 
 
