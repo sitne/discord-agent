@@ -1196,3 +1196,401 @@ async def send_thread_message(guild: Guild, thread_id: str, content: str, **kwar
 
     msg = await thread.send(content)
     return f"✅ Message sent in thread **{thread.name}** (message ID: {msg.id})."
+
+
+# ---------------------------------------------------------------------------
+# Forum channel management
+# ---------------------------------------------------------------------------
+
+@tool(
+    name="create_forum",
+    description="Create a forum channel. Forums organise discussions into tagged posts — great for knowledge bases, Q&A, tips, memos.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Forum channel name",
+            },
+            "topic": {
+                "type": "string",
+                "description": "Forum description / guidelines shown at the top",
+            },
+            "category_name": {
+                "type": "string",
+                "description": "Category to place the forum in (optional)",
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Initial tag names to create (e.g. ['tips', 'memo', 'question', 'resolved'])",
+            },
+            "default_layout": {
+                "type": "string",
+                "enum": ["list", "gallery"],
+                "description": "Default view: 'list' or 'gallery' (default: list)",
+            },
+        },
+        "required": ["name"],
+    },
+)
+async def create_forum(guild: Guild, name: str, **kwargs) -> str:
+    create_kwargs = {"name": name}
+
+    if "topic" in kwargs:
+        create_kwargs["topic"] = kwargs["topic"]
+
+    if "category_name" in kwargs:
+        cat = discord.utils.find(
+            lambda c: kwargs["category_name"].lower() in c.name.lower()
+            and isinstance(c, discord.CategoryChannel),
+            guild.channels,
+        )
+        if cat:
+            create_kwargs["category"] = cat
+
+    layout = kwargs.get("default_layout", "list")
+    create_kwargs["default_layout"] = (
+        discord.ForumLayoutType.gallery_view if layout == "gallery"
+        else discord.ForumLayoutType.list_view
+    )
+
+    # Create tags after forum creation (API requires the channel to exist first)
+    tag_names = kwargs.get("tags", [])
+
+    forum = await guild.create_forum(**create_kwargs)
+
+    # Create tags
+    created_tags = []
+    for tag_name in tag_names[:20]:  # Discord limit: 20 tags
+        try:
+            tag = await forum.create_tag(name=tag_name)
+            created_tags.append(tag.name)
+        except Exception as e:
+            created_tags.append(f"{tag_name} (failed: {e})")
+
+    result = f"\u2705 Forum **#{forum.name}** created (ID: {forum.id})"
+    if create_kwargs.get("topic"):
+        result += f"\nTopic: {create_kwargs['topic'][:100]}"
+    if created_tags:
+        result += f"\nTags: {', '.join(created_tags)}"
+    return result
+
+
+@tool(
+    name="create_forum_post",
+    description="Create a new post (thread) in a forum channel. Each post has a title and initial message content.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "forum_name": {
+                "type": "string",
+                "description": "Name of the forum channel",
+            },
+            "title": {
+                "type": "string",
+                "description": "Post title",
+            },
+            "content": {
+                "type": "string",
+                "description": "Initial message content (supports markdown)",
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Tag names to apply to the post (must match existing tags)",
+            },
+            "auto_archive_duration": {
+                "type": "integer",
+                "enum": [60, 1440, 4320, 10080],
+                "description": "Auto-archive after minutes: 60/1440/4320/10080. Default: 1440",
+            },
+        },
+        "required": ["forum_name", "title", "content"],
+    },
+)
+async def create_forum_post(guild: Guild, forum_name: str, title: str, content: str, **kwargs) -> str:
+    forum = discord.utils.find(
+        lambda c: forum_name.lower() in c.name.lower() and isinstance(c, discord.ForumChannel),
+        guild.channels,
+    )
+    if not forum:
+        return f"Forum channel '{forum_name}' not found."
+
+    create_kwargs = {
+        "name": title,
+        "content": content,
+    }
+
+    auto_archive = kwargs.get("auto_archive_duration")
+    if auto_archive:
+        create_kwargs["auto_archive_duration"] = auto_archive
+
+    # Resolve tag names to ForumTag objects
+    tag_names = kwargs.get("tags", [])
+    if tag_names:
+        applied = []
+        for tname in tag_names:
+            tag = discord.utils.find(
+                lambda t: t.name.lower() == tname.lower(),
+                forum.available_tags,
+            )
+            if tag:
+                applied.append(tag)
+        if applied:
+            create_kwargs["applied_tags"] = applied
+
+    result = await forum.create_thread(**create_kwargs)
+    # result is ThreadWithMessage (thread, message)
+    thread = result.thread if hasattr(result, 'thread') else result
+
+    result_str = f"\u2705 Forum post **{thread.name}** created in #{forum.name} (ID: {thread.id})"
+    if tag_names:
+        resolved = [t.name for t in create_kwargs.get("applied_tags", [])]
+        if resolved:
+            result_str += f"\nTags: {', '.join(resolved)}"
+        missed = [n for n in tag_names if n.lower() not in [r.lower() for r in resolved]]
+        if missed:
+            result_str += f"\nTags not found (skipped): {', '.join(missed)}"
+    return result_str
+
+
+@tool(
+    name="list_forum_posts",
+    description="List posts (threads) in a forum channel, showing title, tags, and activity.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "forum_name": {
+                "type": "string",
+                "description": "Name of the forum channel",
+            },
+            "include_archived": {
+                "type": "boolean",
+                "description": "Include archived posts (default: false)",
+            },
+            "tag_filter": {
+                "type": "string",
+                "description": "Filter posts by tag name (optional)",
+            },
+        },
+        "required": ["forum_name"],
+    },
+)
+async def list_forum_posts(guild: Guild, forum_name: str, **kwargs) -> str:
+    forum = discord.utils.find(
+        lambda c: forum_name.lower() in c.name.lower() and isinstance(c, discord.ForumChannel),
+        guild.channels,
+    )
+    if not forum:
+        return f"Forum channel '{forum_name}' not found."
+
+    include_archived = kwargs.get("include_archived", False)
+    tag_filter = kwargs.get("tag_filter", "").lower()
+
+    lines = [f"**Forum: #{forum.name}**"]
+
+    # Show available tags
+    if forum.available_tags:
+        tags_str = ", ".join(f"`{t.name}`" for t in forum.available_tags)
+        lines.append(f"Tags: {tags_str}")
+    lines.append("")
+
+    # Active posts
+    active = list(forum.threads)
+    if tag_filter:
+        active = [
+            t for t in active
+            if any(tag_filter in tag.name.lower() for tag in t.applied_tags)
+        ]
+
+    if active:
+        lines.append(f"**Active posts** ({len(active)}):")
+        for t in sorted(active, key=lambda t: t.last_message_id or 0, reverse=True):
+            tags = " ".join(f"[{tag.name}]" for tag in t.applied_tags)
+            pin = "\U0001f4cc " if t.flags.pinned else ""
+            lock = "\ud83d\udd12 " if t.locked else ""
+            msgs = f"{t.message_count} msgs" if t.message_count else ""
+            lines.append(f"- {pin}{lock}**{t.name}** {tags} ({msgs}, ID: {t.id})")
+
+    # Archived posts
+    if include_archived:
+        archived = []
+        try:
+            async for t in forum.archived_threads(limit=30):
+                if tag_filter:
+                    if any(tag_filter in tag.name.lower() for tag in t.applied_tags):
+                        archived.append(t)
+                else:
+                    archived.append(t)
+        except discord.Forbidden:
+            lines.append("\n(No permission to view archived posts)")
+
+        if archived:
+            lines.append(f"\n**Archived posts** ({len(archived)}):")
+            for t in archived:
+                tags = " ".join(f"[{tag.name}]" for tag in t.applied_tags)
+                lock = "\ud83d\udd12 " if t.locked else ""
+                lines.append(f"- {lock}**{t.name}** {tags} (ID: {t.id})")
+
+    if len(lines) <= 3:  # only header + tags + blank
+        scope = f" with tag '{tag_filter}'" if tag_filter else ""
+        lines.append(f"No posts found{scope}.")
+
+    return "\n".join(lines)
+
+
+@tool(
+    name="manage_forum_tags",
+    description="Add, remove, or list tags on a forum channel.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "forum_name": {
+                "type": "string",
+                "description": "Name of the forum channel",
+            },
+            "action": {
+                "type": "string",
+                "enum": ["list", "add", "remove"],
+                "description": "Action: list existing tags, add a new tag, or remove a tag",
+            },
+            "tag_name": {
+                "type": "string",
+                "description": "Tag name (required for add/remove)",
+            },
+            "moderated": {
+                "type": "boolean",
+                "description": "If true, only moderators can apply this tag (for add action)",
+            },
+        },
+        "required": ["forum_name", "action"],
+    },
+)
+async def manage_forum_tags(guild: Guild, forum_name: str, action: str, **kwargs) -> str:
+    forum = discord.utils.find(
+        lambda c: forum_name.lower() in c.name.lower() and isinstance(c, discord.ForumChannel),
+        guild.channels,
+    )
+    if not forum:
+        return f"Forum channel '{forum_name}' not found."
+
+    if action == "list":
+        if not forum.available_tags:
+            return f"Forum #{forum.name} has no tags."
+        lines = [f"**Tags in #{forum.name}** ({len(forum.available_tags)}/20):"]
+        for t in forum.available_tags:
+            emoji = f" {t.emoji}" if t.emoji else ""
+            mod = " [moderated]" if t.moderated else ""
+            lines.append(f"- `{t.name}`{emoji}{mod} (ID: {t.id})")
+        return "\n".join(lines)
+
+    tag_name = kwargs.get("tag_name")
+    if not tag_name:
+        return "tag_name is required for add/remove."
+
+    if action == "add":
+        if len(forum.available_tags) >= 20:
+            return "Forum already has 20 tags (Discord maximum)."
+        moderated = kwargs.get("moderated", False)
+        tag = await forum.create_tag(name=tag_name, moderated=moderated)
+        return f"\u2705 Tag `{tag.name}` added to #{forum.name}."
+
+    if action == "remove":
+        tag = discord.utils.find(
+            lambda t: t.name.lower() == tag_name.lower(),
+            forum.available_tags,
+        )
+        if not tag:
+            return f"Tag '{tag_name}' not found in #{forum.name}."
+        # Remove by editing the forum's available_tags without this tag
+        new_tags = [t for t in forum.available_tags if t.id != tag.id]
+        await forum.edit(available_tags=new_tags)
+        return f"\u2705 Tag `{tag_name}` removed from #{forum.name}."
+
+    return f"Unknown action: {action}"
+
+
+@tool(
+    name="edit_forum",
+    description="Edit a forum channel's settings — name, topic, default layout, sort order, slowmode, or tag requirements.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "forum_name": {
+                "type": "string",
+                "description": "Current name of the forum channel",
+            },
+            "name": {
+                "type": "string",
+                "description": "New forum name",
+            },
+            "topic": {
+                "type": "string",
+                "description": "New forum description / guidelines",
+            },
+            "default_layout": {
+                "type": "string",
+                "enum": ["list", "gallery"],
+                "description": "Default view layout",
+            },
+            "default_sort_order": {
+                "type": "string",
+                "enum": ["latest_activity", "creation_date"],
+                "description": "How posts are sorted",
+            },
+            "slowmode_delay": {
+                "type": "integer",
+                "description": "Slowmode for the forum in seconds (0 to disable)",
+            },
+            "require_tag": {
+                "type": "boolean",
+                "description": "Require at least one tag on every post",
+            },
+        },
+        "required": ["forum_name"],
+    },
+)
+async def edit_forum(guild: Guild, forum_name: str, **kwargs) -> str:
+    forum = discord.utils.find(
+        lambda c: forum_name.lower() in c.name.lower() and isinstance(c, discord.ForumChannel),
+        guild.channels,
+    )
+    if not forum:
+        return f"Forum channel '{forum_name}' not found."
+
+    edit_kwargs = {}
+    changes = []
+
+    if "name" in kwargs:
+        edit_kwargs["name"] = kwargs["name"]
+        changes.append(f"name → {kwargs['name']}")
+    if "topic" in kwargs:
+        edit_kwargs["topic"] = kwargs["topic"]
+        changes.append(f"topic updated")
+    if "default_layout" in kwargs:
+        edit_kwargs["default_layout"] = (
+            discord.ForumLayoutType.gallery_view if kwargs["default_layout"] == "gallery"
+            else discord.ForumLayoutType.list_view
+        )
+        changes.append(f"layout → {kwargs['default_layout']}")
+    if "default_sort_order" in kwargs:
+        edit_kwargs["default_sort_order"] = (
+            discord.ForumOrderType.creation_date if kwargs["default_sort_order"] == "creation_date"
+            else discord.ForumOrderType.latest_activity
+        )
+        changes.append(f"sort → {kwargs['default_sort_order']}")
+    if "slowmode_delay" in kwargs:
+        edit_kwargs["slowmode_delay"] = min(max(kwargs["slowmode_delay"], 0), 21600)
+        changes.append(f"slowmode → {kwargs['slowmode_delay']}s")
+    if "require_tag" in kwargs:
+        flags = forum.flags
+        flags.require_tag = kwargs["require_tag"]
+        edit_kwargs["flags"] = flags
+        changes.append(f"require_tag → {kwargs['require_tag']}")
+
+    if not edit_kwargs:
+        return "No changes specified."
+
+    await forum.edit(**edit_kwargs)
+    return f"\u2705 Forum **#{forum.name}** updated: {', '.join(changes)}"

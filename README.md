@@ -2,14 +2,14 @@
 
 **[日本語](README.ja.md)**
 
-A Discord bot that acts as an autonomous AI agent with 74 tools and 5 skills, long-term memory, a cron-based task scheduler, web capabilities, code generation with GitHub CI, a vision system for idea-to-project tracking, and an extensible skills system following the [SKILL.md standard](https://agentskills.io). Powered by any LLM on [OpenRouter](https://openrouter.ai).
+A Discord bot that acts as an autonomous AI agent with 79 tools and 5 skills, long-term memory, a cron-based task scheduler, web capabilities, code generation with GitHub CI, a vision system for idea-to-project tracking, and an extensible skills system following the [SKILL.md standard](https://agentskills.io). Powered by any LLM on [OpenRouter](https://openrouter.ai).
 
 ~6,500 lines of Python across 17 files. Built with [discord.py](https://github.com/Rapptz/discord.py).
 
 ## Features
 
 - **LLM-powered agent** — Routes through OpenRouter; switch models at runtime with `/model`
-- **74 tools** across 10 categories (Discord, Thread, Memory, Scheduler, Web, System, CodeGen, HTTP, Skills, Vision)
+- **79 tools** across 11 categories (Discord, Thread, Forum, Memory, Scheduler, Web, System, CodeGen, HTTP, Skills, Vision)
 - **Skills system** — follows the [SKILL.md standard](https://agentskills.io) with progressive disclosure; install community skills from GitHub, or let the bot create its own
 - **Long-term memory** — SQLite + FTS5 hybrid search with automatic context injection
 - **Autonomous scheduler** — Cron expressions, retry logic, dead-letter queue, execution history
@@ -26,6 +26,7 @@ A Discord bot that acts as an autonomous AI agent with 74 tools and 5 skills, lo
 |---|---|---|
 | **Discord** | 18 | `send_message` `edit_message` `delete_messages` `create_channel` `delete_channel` `rename_channel` `set_channel_topic` `list_channels` `list_members` `get_member_info` `set_nickname` `create_role` `assign_role` `remove_role` `kick_member` `ban_member` `unban_member` `get_server_info` |
 | **Thread** | 7 | `create_thread` `list_threads` `edit_thread` `delete_thread` `thread_add_member` `thread_remove_member` `send_thread_message` |
+| **Forum** | 5 | `create_forum` `create_forum_post` `list_forum_posts` `manage_forum_tags` `edit_forum` |
 | **Memory** | 5 | `remember` `recall` `forget` `forget_by_key` `list_memory_categories` |
 | **Scheduler** | 5 | `create_scheduled_task` `list_scheduled_tasks` `delete_scheduled_task` `toggle_scheduled_task` `get_task_history` |
 | **Web** | 4 | `web_search` `web_news` `read_webpage` `screenshot_webpage` |
