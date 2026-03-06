@@ -2,14 +2,15 @@
 
 **[日本語](README.ja.md)**
 
-A Discord bot that acts as an autonomous AI agent with 52 tools, long-term memory, a cron-based task scheduler, web capabilities, and code generation with GitHub CI. Powered by any LLM on [OpenRouter](https://openrouter.ai) (default: Gemini 2.5 Flash).
+A Discord bot that acts as an autonomous AI agent with 53 tools, long-term memory, a cron-based task scheduler, web capabilities, code generation with GitHub CI, generic HTTP client, and a dynamic skills system. Powered by any LLM on [OpenRouter](https://openrouter.ai) (default: Gemini 2.5 Flash).
 
-~4,600 lines of Python across 13 files. Built with [discord.py](https://github.com/Rapptz/discord.py).
+~5,000 lines of Python across 15 files. Built with [discord.py](https://github.com/Rapptz/discord.py).
 
 ## Features
 
 - **LLM-powered agent** — Routes through OpenRouter; switch models at runtime with `/model`
-- **52 tools** across 6 categories (Discord, Memory, Scheduler, Web, System, CodeGen)
+- **53 tools** across 7 categories (Discord, Memory, Scheduler, Web, System, CodeGen, HTTP)
+- **Skills system** — auto-injects relevant knowledge (image gen, translation, video, data analysis) into context based on user input
 - **Long-term memory** — SQLite + FTS5 hybrid search with automatic context injection
 - **Autonomous scheduler** — Cron expressions, retry logic, dead-letter queue, execution history
 - **Web access** — Search, news, page reading (3-tier extraction + caching), and screenshots via Playwright
@@ -28,6 +29,7 @@ A Discord bot that acts as an autonomous AI agent with 52 tools, long-term memor
 | **Web** | 4 | `web_search` `web_news` `read_webpage` `screenshot_webpage` |
 | **System** | 11 | `run_shell` + 10 GitHub CLI tools |
 | **CodeGen** | 6 | `codegen_create_project` `codegen_update_files` `codegen_check_ci` `codegen_list_projects` `codegen_read_file` `codegen_delete_file` |
+| **HTTP** | 1 | `http_request` |
 
 ## Setup
 
@@ -88,7 +90,10 @@ tools.py                Discord management tools (18)
 tools_web.py            Web search, reading, and screenshots
 tools_system.py         Shell execution and GitHub CLI tools
 tools_codegen.py        Code generation, GitHub project management, CI
+tools_http.py           Generic HTTP client with SSRF protection
 tools_permissions.py    Permission checks and confirmation gates
+skills_manager.py       Dynamic skill loading and context injection
+skills/                 Markdown skill files (image gen, translation, video, data analysis)
 context_manager.py      Conversation history and compression
 cron_parser.py          Cron expression parser
 mcp_manager.py          MCP server lifecycle and tool routing

@@ -2,14 +2,15 @@
 
 **[English](README.md)**
 
-52種のツール、長期記憶、cronベースの自律スケジューラ、Web機能、コード生成+GitHub CI連携を備えた自律AIエージェント型Discord Bot。[OpenRouter](https://openrouter.ai) 経由で任意のLLMを利用可能（デフォルト: Gemini 2.5 Flash）。
+53種のツール、長期記憶、cronベースの自律スケジューラ、Web機能、コード生成+GitHub CI、汎用HTTPクライアント、動的スキルシステムを備えた自律AIエージェント型Discord Bot。[OpenRouter](https://openrouter.ai) 経由で任意のLLMを利用可能（デフォルト: Gemini 2.5 Flash）。
 
-Python 13ファイル・約4,600行。[discord.py](https://github.com/Rapptz/discord.py) 使用。
+Python 15ファイル・約5,000行。[discord.py](https://github.com/Rapptz/discord.py) 使用。
 
 ## 機能
 
 - **LLMエージェント** — OpenRouter経由で任意のモデルを利用、`/model` で実行時に切り替え可能
-- **52種のツール** — Discord管理・記憶・スケジューラ・Web・システム・コード生成の6カテゴリ
+- **53種のツール** — Discord管理・記憶・スケジューラ・Web・システム・コード生成・HTTPの7カテゴリ
+- **スキルシステム** — ユーザー入力に応じて関連知識（画像生成・翻訳・動画・データ分析）を自動注入
 - **長期記憶** — SQLite + FTS5ハイブリッド検索、関連記憶の自動コンテキスト注入
 - **自律スケジューラ** — cron式、リトライ・デッドレターキュー・実行履歴
 - **Webアクセス** — 検索・ニュース・ページ読み取り（3階層抽出 + キャッシュ）・Playwrightスクリーンショット
@@ -28,6 +29,7 @@ Python 13ファイル・約4,600行。[discord.py](https://github.com/Rapptz/dis
 | **Web** | 4 | `web_search` `web_news` `read_webpage` `screenshot_webpage` |
 | **システム** | 11 | `run_shell` + GitHub CLIツール 10種 |
 | **コード生成** | 6 | `codegen_create_project` `codegen_update_files` `codegen_check_ci` `codegen_list_projects` `codegen_read_file` `codegen_delete_file` |
+| **HTTP** | 1 | `http_request` |
 
 ## セットアップ
 
@@ -88,7 +90,10 @@ tools.py                Discord管理ツール (18種)
 tools_web.py            Web検索・ページ読み取り・スクリーンショット
 tools_system.py         シェル実行・GitHub CLIツール
 tools_codegen.py        コード生成・GitHubプロジェクト管理・CI連携
+tools_http.py           汎用HTTPクライアント（SSRF保護付き）
 tools_permissions.py    権限チェック・確認ゲート
+skills_manager.py       スキル動的読み込み・コンテキスト注入
+skills/                 スキルMarkdownファイル（画像生成・翻訳・動画・データ分析）
 context_manager.py      会話履歴管理・圧縮
 cron_parser.py          cron式パーサー
 mcp_manager.py          MCPサーバー管理・ツールルーティング

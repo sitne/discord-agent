@@ -15,6 +15,7 @@ import tools         # noqa: F401 - Discord management tools
 import tools_web     # noqa: F401 - Web search, reading, screenshots
 import tools_system  # noqa: F401 - Shell, GitHub CLI
 import tools_codegen # noqa: F401 - Code generation, GitHub projects
+import tools_http    # noqa: F401 - Generic HTTP requests
 
 load_dotenv()
 

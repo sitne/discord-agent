@@ -23,6 +23,7 @@ from tools_permissions import (
     request_confirmation,
 )
 from context_manager import maybe_compress_history
+from skills_manager import match_skills, format_skills_context
 
 log = logging.getLogger("agent")
 
@@ -290,6 +291,13 @@ class AgentCog(commands.Cog):
                     lines.append(f"- [{m['category']}] {m['key']}: {m['content'][:300]}{imp}")
                 memories_context = "\n".join(lines)
 
+        skills_context = ""
+        if user_input:
+            matched = match_skills(user_input)
+            if matched:
+                skills_context = "\n" + format_skills_context(matched)
+                log.info(f"Skills injected: {[s['name'] for s in matched]}")
+
         owner_context = ""
         if is_owner(message.author.id):
             owner_context = """\n\nOWNER MODE ACTIVE:
@@ -306,7 +314,7 @@ This user is the bot owner. You have FULL unrestricted access:
             channel_name=message.channel.name if hasattr(message.channel, "name") else "DM",
             user_name=message.author.display_name,
             memories_context=memories_context,
-        ) + owner_context
+        ) + skills_context + owner_context
 
     # ── LLM call with retry ───────────────────────────────────────────────
 
