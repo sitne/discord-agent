@@ -814,3 +814,35 @@ async def get_task_history(guild: Guild, task_id: int, limit: int = 10, **kwargs
             line += f" (retry #{ex['retry_count']})"
         lines.append(line)
     return "\n".join(lines)
+
+
+@tool(
+    "db_stats",
+    "Show database statistics including size, row counts, and memory usage per guild.",
+    {
+        "type": "object",
+        "properties": {},
+    },
+)
+async def db_stats(guild: Guild, **kwargs) -> str:
+    db = guild._state._get_client().db  # type: ignore
+    stats = await db.get_db_stats()
+    mem_stats = await db.get_memory_stats(str(guild.id))
+
+    lines = [
+        f"**Database Statistics**",
+        f"",
+        f"**Size:** {stats['db_size_mb']:.2f} MB",
+        f"",
+        f"**Table row counts:**",
+    ]
+    for table, count in stats["tables"].items():
+        lines.append(f"- {table}: {count:,}")
+
+    lines.append(f"")
+    lines.append(f"**Memory (this server):** {mem_stats['count']:,} entries ({mem_stats['total_bytes']:,} bytes)")
+    if mem_stats["categories"]:
+        for cat, cnt in mem_stats["categories"].items():
+            lines.append(f"- {cat}: {cnt}")
+
+    return "\n".join(lines)

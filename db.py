@@ -689,3 +689,116 @@ class Database:
         )
         await self.conn.commit()
         return cursor.rowcount > 0
+
+    # ── Data lifecycle management ─────────────────────────────────────────
+
+    async def get_db_stats(self) -> dict:
+        """Get database size and row counts for monitoring."""
+        import os
+        db_size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
+        tables = {}
+        for table in ["conversations", "message_archive", "memories", "scheduled_tasks", "task_executions", "audit_log"]:
+            try:
+                cursor = await self.conn.execute(f"SELECT count(*) FROM {table}")
+                row = await cursor.fetchone()
+                tables[table] = row[0]
+            except Exception:
+                tables[table] = 0
+        return {"db_size_bytes": db_size, "db_size_mb": round(db_size / 1048576, 2), "tables": tables}
+
+    async def cleanup_old_data(
+        self,
+        conversation_days: int = 30,
+        archive_days: int = 90,
+        execution_days: int = 30,
+        audit_days: int = 30,
+    ) -> dict:
+        """Delete old data to keep DB size manageable. Returns count of deleted rows."""
+        import time as _time
+        deleted = {}
+
+        # Old conversations (by updated_at timestamp)
+        cutoff = _time.time() - (conversation_days * 86400)
+        cursor = await self.conn.execute(
+            "DELETE FROM conversations WHERE updated_at < ?", (cutoff,)
+        )
+        deleted["conversations"] = cursor.rowcount
+
+        # Old message archive entries
+        cutoff_iso = _time.strftime("%Y-%m-%d", _time.gmtime(_time.time() - archive_days * 86400))
+        cursor = await self.conn.execute(
+            "DELETE FROM message_archive WHERE timestamp < ?", (cutoff_iso,)
+        )
+        deleted["message_archive"] = cursor.rowcount
+
+        # Old task executions
+        cutoff = _time.time() - (execution_days * 86400)
+        cursor = await self.conn.execute(
+            "DELETE FROM task_executions WHERE started_at < ?", (cutoff,)
+        )
+        deleted["task_executions"] = cursor.rowcount
+
+        # Old audit logs
+        cutoff = _time.time() - (audit_days * 86400)
+        cursor = await self.conn.execute(
+            "DELETE FROM audit_log WHERE timestamp < ?", (cutoff,)
+        )
+        deleted["audit_log"] = cursor.rowcount
+
+        await self.conn.commit()
+
+        # Reclaim space
+        total = sum(deleted.values())
+        if total > 0:
+            await self.conn.execute("PRAGMA incremental_vacuum")
+
+        return deleted
+
+    async def get_memory_stats(self, guild_id: str) -> dict:
+        """Get memory usage stats for a guild."""
+        cursor = await self.conn.execute(
+            "SELECT count(*), COALESCE(SUM(LENGTH(content)), 0) FROM memories WHERE guild_id = ?",
+            (guild_id,),
+        )
+        row = await cursor.fetchone()
+        count, total_bytes = row[0], row[1]
+
+        cursor = await self.conn.execute(
+            "SELECT category, count(*) FROM memories WHERE guild_id = ? GROUP BY category ORDER BY count(*) DESC",
+            (guild_id,),
+        )
+        categories = {r[0]: r[1] for r in await cursor.fetchall()}
+
+        return {"count": count, "total_bytes": total_bytes, "categories": categories}
+
+    async def cleanup_memories(
+        self, guild_id: str, max_memories: int = 1000, keep_important: int = 5
+    ) -> int:
+        """If memory count exceeds max, delete lowest-value memories.
+        Value = importance * (1 + log(access_count + 1)) — keeps frequently accessed and important ones.
+        Memories with importance >= keep_important are never auto-deleted.
+        Returns number deleted."""
+        import math
+        cursor = await self.conn.execute(
+            "SELECT count(*) FROM memories WHERE guild_id = ?", (guild_id,),
+        )
+        count = (await cursor.fetchone())[0]
+        if count <= max_memories:
+            return 0
+
+        to_delete = count - max_memories
+        # Delete lowest-value memories that aren't high-importance
+        # Score: importance * (access_count + 1) — simple but effective
+        cursor = await self.conn.execute(
+            """DELETE FROM memories WHERE id IN (
+                SELECT id FROM memories
+                WHERE guild_id = ? AND importance < ?
+                ORDER BY importance * (COALESCE(access_count, 0) + 1) ASC,
+                         last_accessed_at ASC NULLS FIRST
+                LIMIT ?
+            )""",
+            (guild_id, keep_important, to_delete),
+        )
+        deleted = cursor.rowcount
+        await self.conn.commit()
+        return deleted

@@ -42,11 +42,13 @@ class SchedulerCog(commands.Cog):
 
     async def cog_load(self):
         self.scheduler_loop.start()
+        self.daily_cleanup.start()
         log.info("Task scheduler started (interval=%ds, timeout=%ds)",
                  CHECK_INTERVAL_SECONDS, TASK_TIMEOUT_SECONDS)
 
     async def cog_unload(self):
         self.scheduler_loop.cancel()
+        self.daily_cleanup.cancel()
 
     @tasks.loop(seconds=CHECK_INTERVAL_SECONDS)
     async def scheduler_loop(self):
@@ -213,6 +215,41 @@ class SchedulerCog(commands.Cog):
                     await channel.send(chunk)
 
         return response
+
+    # ── Daily cleanup ─────────────────────────────────────────────────────────
+
+    @tasks.loop(hours=24)
+    async def daily_cleanup(self):
+        """Run daily maintenance: prune old data, check DB size."""
+        try:
+            db = self.bot.db
+            stats_before = await db.get_db_stats()
+            deleted = await db.cleanup_old_data()
+            stats_after = await db.get_db_stats()
+
+            total_deleted = sum(deleted.values())
+            if total_deleted > 0:
+                log.info(
+                    "Daily cleanup: deleted %d rows (%s), DB: %.2fMB -> %.2fMB",
+                    total_deleted, deleted,
+                    stats_before["db_size_mb"], stats_after["db_size_mb"],
+                )
+
+            # Memory pruning per guild
+            for guild in self.bot.guilds:
+                pruned = await db.cleanup_memories(str(guild.id))
+                if pruned > 0:
+                    log.info("Pruned %d low-value memories from guild %s", pruned, guild.name)
+
+            # Warn if DB is getting large (>500MB)
+            if stats_after["db_size_mb"] > 500:
+                log.warning("Database size is %.2fMB - consider increasing cleanup aggressiveness", stats_after["db_size_mb"])
+        except Exception as e:
+            log.error("Daily cleanup failed: %s", e)
+
+    @daily_cleanup.before_loop
+    async def before_cleanup(self):
+        await self.bot.wait_until_ready()
 
 
 async def setup(bot: commands.Bot):
