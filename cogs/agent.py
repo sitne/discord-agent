@@ -138,6 +138,7 @@ Capabilities:
 - **MCP tools**: additional capabilities from connected MCP servers
 - **Attachments**: can read images (vision), text files, and audio (transcription)
 - **Skills**: Load specialized knowledge on-demand with `load_skill`. Check available skills before attempting unfamiliar tasks. After successfully completing a novel task, create a skill with `create_skill` to remember the approach.
+- **Vision**: Capture ideas with `capture_idea`, structure them into projects with `create_project`, track progress with `project_dashboard`. When the owner shares any idea or inspiration, proactively use `capture_idea` to save it.
 
 Memory guidelines:
 - Proactively use 'remember' to save important information (server rules, user preferences, decisions, recurring topics).
@@ -307,13 +308,29 @@ This user is the bot owner. You have FULL unrestricted access:
 - Treat this as a personal AI assistant with full system access
 - Be helpful and execute commands directly without excessive warnings"""
 
+        # Active projects context (injected for owner)
+        projects_context = ""
+        if is_owner(message.author.id) and hasattr(message, "guild") and message.guild:
+            try:
+                active = await self.bot.db.get_active_projects(str(message.guild.id), limit=3)
+                if active:
+                    lines = ["\n\nActive projects (use project_dashboard for details):"]
+                    for p in active:
+                        ms = p.get("milestones") or []
+                        ms_done = sum(1 for m in ms if m.get("status") == "done")
+                        ms_str = f" [{ms_done}/{len(ms)} milestones]" if ms else ""
+                        lines.append(f"- [{p['status']}] {p['title']} (P{p['priority']}){ms_str}: {p['description'][:100]}")
+                    projects_context = "\n".join(lines)
+            except Exception:
+                pass  # Don't break system prompt on DB errors
+
         return SYSTEM_PROMPT_TEMPLATE.format(
             server_name=message.guild.name if message.guild else "DM",
             member_count=message.guild.member_count if message.guild else 1,
             channel_name=message.channel.name if hasattr(message.channel, "name") else "DM",
             user_name=message.author.display_name,
             memories_context=memories_context,
-        ) + skills_context + owner_context
+        ) + skills_context + owner_context + projects_context
 
     # ── LLM call with retry ───────────────────────────────────────────────
 

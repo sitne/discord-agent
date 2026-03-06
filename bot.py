@@ -18,6 +18,7 @@ import tools_codegen # noqa: F401 - Code generation, GitHub projects
 import tools_http    # noqa: F401 - Generic HTTP requests
 import tools_skills  # noqa: F401 - Skill management (SKILL.md standard)
 import tools_skills  # noqa: F401 - Skill management tools
+import tools_vision  # noqa: F401 - Vision system: ideas & projects
 
 load_dotenv()
 

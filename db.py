@@ -172,6 +172,80 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_executions_task
                 ON task_executions(task_id, started_at DESC);
+
+            -- ====================
+            -- Ideas (raw thoughts/inspirations)
+            -- ====================
+            CREATE TABLE IF NOT EXISTS ideas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                tags TEXT DEFAULT '[]',
+                status TEXT DEFAULT 'raw',
+                project_id INTEGER,
+                source TEXT DEFAULT 'manual',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_ideas_guild ON ideas(guild_id, status);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS idea_fts USING fts5(
+                content, tags,
+                content='ideas', content_rowid='id',
+                tokenize='unicode61'
+            );
+            CREATE TRIGGER IF NOT EXISTS idea_ai AFTER INSERT ON ideas BEGIN
+                INSERT INTO idea_fts(rowid, content, tags) VALUES (new.id, new.content, new.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS idea_ad AFTER DELETE ON ideas BEGIN
+                INSERT INTO idea_fts(idea_fts, rowid, content, tags) VALUES ('delete', old.id, old.content, old.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS idea_au AFTER UPDATE ON ideas BEGIN
+                INSERT INTO idea_fts(idea_fts, rowid, content, tags) VALUES ('delete', old.id, old.content, old.tags);
+                INSERT INTO idea_fts(rowid, content, tags) VALUES (new.id, new.content, new.tags);
+            END;
+
+            -- ====================
+            -- Projects (structured visions)
+            -- ====================
+            CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                vision_doc TEXT DEFAULT '',
+                status TEXT DEFAULT 'planning',
+                priority INTEGER DEFAULT 5,
+                tags TEXT DEFAULT '[]',
+                milestones TEXT DEFAULT '[]',
+                github_repo TEXT,
+                notes TEXT DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_projects_guild ON projects(guild_id, status);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS project_fts USING fts5(
+                title, description, vision_doc, tags,
+                content='projects', content_rowid='id',
+                tokenize='unicode61'
+            );
+            CREATE TRIGGER IF NOT EXISTS project_ai AFTER INSERT ON projects BEGIN
+                INSERT INTO project_fts(rowid, title, description, vision_doc, tags)
+                VALUES (new.id, new.title, new.description, new.vision_doc, new.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS project_ad AFTER DELETE ON projects BEGIN
+                INSERT INTO project_fts(project_fts, rowid, title, description, vision_doc, tags)
+                VALUES ('delete', old.id, old.title, old.description, old.vision_doc, old.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS project_au AFTER UPDATE ON projects BEGIN
+                INSERT INTO project_fts(project_fts, rowid, title, description, vision_doc, tags)
+                VALUES ('delete', old.id, old.title, old.description, old.vision_doc, old.tags);
+                INSERT INTO project_fts(rowid, title, description, vision_doc, tags)
+                VALUES (new.id, new.title, new.description, new.vision_doc, new.tags);
+            END;
         """)
         await self.conn.commit()
         await self._migrate_memories()
@@ -802,3 +876,277 @@ class Database:
         deleted = cursor.rowcount
         await self.conn.commit()
         return deleted
+
+    # ---------------------------------------------------------------
+    # Ideas
+    # ---------------------------------------------------------------
+    async def add_idea(
+        self, guild_id: str, user_id: str, content: str,
+        tags: Optional[list] = None, source: str = "manual",
+    ) -> int:
+        """Store a new idea and return its id."""
+        now = time.time()
+        tags_json = json.dumps(tags or [])
+        cursor = await self.conn.execute(
+            "INSERT INTO ideas (guild_id, user_id, content, tags, source, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (guild_id, user_id, content, tags_json, source, now, now),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid
+
+    async def list_ideas(
+        self, guild_id: str, status: Optional[str] = None, limit: int = 20,
+    ) -> list[dict]:
+        """List ideas for a guild, optionally filtered by status."""
+        if status:
+            cursor = await self.conn.execute(
+                "SELECT id, user_id, content, tags, status, project_id, source, created_at, updated_at "
+                "FROM ideas WHERE guild_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?",
+                (guild_id, status, limit),
+            )
+        else:
+            cursor = await self.conn.execute(
+                "SELECT id, user_id, content, tags, status, project_id, source, created_at, updated_at "
+                "FROM ideas WHERE guild_id = ? ORDER BY created_at DESC LIMIT ?",
+                (guild_id, limit),
+            )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r[0], "user_id": r[1], "content": r[2],
+                "tags": json.loads(r[3]) if r[3] else [],
+                "status": r[4], "project_id": r[5], "source": r[6],
+                "created_at": r[7], "updated_at": r[8],
+            }
+            for r in rows
+        ]
+
+    async def search_ideas(
+        self, guild_id: str, query: str, limit: int = 10,
+    ) -> list[dict]:
+        """Full-text search across ideas."""
+        if not query or not query.strip():
+            return []
+        safe_q = query.replace('"', '""')
+        fts_query = f'"{ safe_q}"'
+        cursor = await self.conn.execute(
+            """
+            SELECT i.id, i.user_id, i.content, i.tags, i.status, i.project_id,
+                   i.source, i.created_at, i.updated_at
+            FROM idea_fts f
+            JOIN ideas i ON i.id = f.rowid
+            WHERE f.idea_fts MATCH ? AND i.guild_id = ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (fts_query, guild_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r[0], "user_id": r[1], "content": r[2],
+                "tags": json.loads(r[3]) if r[3] else [],
+                "status": r[4], "project_id": r[5], "source": r[6],
+                "created_at": r[7], "updated_at": r[8],
+            }
+            for r in rows
+        ]
+
+    async def update_idea(self, guild_id: str, idea_id: int, **kwargs) -> bool:
+        """Update an idea's fields (status, content, tags, project_id)."""
+        allowed = {"status", "content", "tags", "project_id"}
+        updates = []
+        values = []
+        for key, val in kwargs.items():
+            if key not in allowed:
+                continue
+            if key == "tags":
+                val = json.dumps(val) if isinstance(val, list) else val
+            updates.append(f"{key} = ?")
+            values.append(val)
+        if not updates:
+            return False
+        updates.append("updated_at = ?")
+        values.append(time.time())
+        values.extend([idea_id, guild_id])
+        cursor = await self.conn.execute(
+            f"UPDATE ideas SET {', '.join(updates)} WHERE id = ? AND guild_id = ?",
+            values,
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def delete_idea(self, guild_id: str, idea_id: int) -> bool:
+        """Delete an idea by id."""
+        cursor = await self.conn.execute(
+            "DELETE FROM ideas WHERE id = ? AND guild_id = ?",
+            (idea_id, guild_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    # ---------------------------------------------------------------
+    # Projects
+    # ---------------------------------------------------------------
+    async def create_project(
+        self, guild_id: str, user_id: str, title: str, description: str,
+        vision_doc: str = "", priority: int = 5, tags: Optional[list] = None,
+        github_repo: Optional[str] = None,
+    ) -> int:
+        """Create a new project and return its id."""
+        now = time.time()
+        tags_json = json.dumps(tags or [])
+        cursor = await self.conn.execute(
+            "INSERT INTO projects "
+            "(guild_id, user_id, title, description, vision_doc, priority, tags, github_repo, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (guild_id, user_id, title, description, vision_doc, priority, tags_json, github_repo, now, now),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid
+
+    async def get_project(self, guild_id: str, project_id: int) -> Optional[dict]:
+        """Get a single project by id."""
+        cursor = await self.conn.execute(
+            "SELECT id, user_id, title, description, vision_doc, status, priority, "
+            "tags, milestones, github_repo, notes, created_at, updated_at "
+            "FROM projects WHERE id = ? AND guild_id = ?",
+            (project_id, guild_id),
+        )
+        r = await cursor.fetchone()
+        if not r:
+            return None
+        return {
+            "id": r[0], "user_id": r[1], "title": r[2], "description": r[3],
+            "vision_doc": r[4], "status": r[5], "priority": r[6],
+            "tags": json.loads(r[7]) if r[7] else [],
+            "milestones": json.loads(r[8]) if r[8] else [],
+            "github_repo": r[9], "notes": r[10],
+            "created_at": r[11], "updated_at": r[12],
+        }
+
+    async def list_projects(
+        self, guild_id: str, status: Optional[str] = None, limit: int = 20,
+    ) -> list[dict]:
+        """List projects for a guild, optionally filtered by status."""
+        if status:
+            cursor = await self.conn.execute(
+                "SELECT id, user_id, title, description, vision_doc, status, priority, "
+                "tags, milestones, github_repo, notes, created_at, updated_at "
+                "FROM projects WHERE guild_id = ? AND status = ? ORDER BY priority DESC, updated_at DESC LIMIT ?",
+                (guild_id, status, limit),
+            )
+        else:
+            cursor = await self.conn.execute(
+                "SELECT id, user_id, title, description, vision_doc, status, priority, "
+                "tags, milestones, github_repo, notes, created_at, updated_at "
+                "FROM projects WHERE guild_id = ? ORDER BY priority DESC, updated_at DESC LIMIT ?",
+                (guild_id, limit),
+            )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r[0], "user_id": r[1], "title": r[2], "description": r[3],
+                "vision_doc": r[4], "status": r[5], "priority": r[6],
+                "tags": json.loads(r[7]) if r[7] else [],
+                "milestones": json.loads(r[8]) if r[8] else [],
+                "github_repo": r[9], "notes": r[10],
+                "created_at": r[11], "updated_at": r[12],
+            }
+            for r in rows
+        ]
+
+    async def search_projects(
+        self, guild_id: str, query: str, limit: int = 10,
+    ) -> list[dict]:
+        """Full-text search across projects."""
+        if not query or not query.strip():
+            return []
+        safe_q = query.replace('"', '""')
+        fts_query = f'"{ safe_q}"'
+        cursor = await self.conn.execute(
+            """
+            SELECT p.id, p.user_id, p.title, p.description, p.vision_doc, p.status,
+                   p.priority, p.tags, p.milestones, p.github_repo, p.notes,
+                   p.created_at, p.updated_at
+            FROM project_fts f
+            JOIN projects p ON p.id = f.rowid
+            WHERE f.project_fts MATCH ? AND p.guild_id = ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (fts_query, guild_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r[0], "user_id": r[1], "title": r[2], "description": r[3],
+                "vision_doc": r[4], "status": r[5], "priority": r[6],
+                "tags": json.loads(r[7]) if r[7] else [],
+                "milestones": json.loads(r[8]) if r[8] else [],
+                "github_repo": r[9], "notes": r[10],
+                "created_at": r[11], "updated_at": r[12],
+            }
+            for r in rows
+        ]
+
+    async def update_project(self, guild_id: str, project_id: int, **kwargs) -> bool:
+        """Update a project's fields."""
+        allowed = {
+            "title", "description", "vision_doc", "status", "priority",
+            "tags", "milestones", "github_repo", "notes",
+        }
+        updates = []
+        values = []
+        for key, val in kwargs.items():
+            if key not in allowed:
+                continue
+            if key in ("tags", "milestones"):
+                val = json.dumps(val) if isinstance(val, list) else val
+            updates.append(f"{key} = ?")
+            values.append(val)
+        if not updates:
+            return False
+        updates.append("updated_at = ?")
+        values.append(time.time())
+        values.extend([project_id, guild_id])
+        cursor = await self.conn.execute(
+            f"UPDATE projects SET {', '.join(updates)} WHERE id = ? AND guild_id = ?",
+            values,
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_active_projects(
+        self, guild_id: str, limit: int = 2,
+    ) -> list[dict]:
+        """Get active projects ordered by priority (highest first)."""
+        cursor = await self.conn.execute(
+            "SELECT id, user_id, title, description, vision_doc, status, priority, "
+            "tags, milestones, github_repo, notes, created_at, updated_at "
+            "FROM projects WHERE guild_id = ? AND status = 'active' "
+            "ORDER BY priority DESC LIMIT ?",
+            (guild_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r[0], "user_id": r[1], "title": r[2], "description": r[3],
+                "vision_doc": r[4], "status": r[5], "priority": r[6],
+                "tags": json.loads(r[7]) if r[7] else [],
+                "milestones": json.loads(r[8]) if r[8] else [],
+                "github_repo": r[9], "notes": r[10],
+                "created_at": r[11], "updated_at": r[12],
+            }
+            for r in rows
+        ]
+
+    async def delete_project(self, guild_id: str, project_id: int) -> bool:
+        """Delete a project by id."""
+        cursor = await self.conn.execute(
+            "DELETE FROM projects WHERE id = ? AND guild_id = ?",
+            (project_id, guild_id),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
