@@ -81,7 +81,22 @@ A Discord bot that acts as an autonomous AI agent with 67 tools and 5 skills, lo
 
    Invite the bot with permissions for managing channels, roles, messages, and members.
 
-4. **Run**
+4. **Optional: Cloudflare & GitHub CLI setup** (recommended)
+
+   For web deployment via Cloudflare and GitHub integration:
+
+   ```bash
+   # GitHub CLI (repo management, CI, issues)
+   # https://cli.github.com/
+   gh auth login
+
+   # Cloudflare CLI (Pages/Workers deploy)
+   npm install -g wrangler
+   wrangler login
+   # Or set CLOUDFLARE_API_TOKEN in .env instead of browser login
+   ```
+
+5. **Run**
 
    ```bash
    uv run python bot.py

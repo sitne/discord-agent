@@ -81,7 +81,22 @@ Python 17ファイル・約6,500行。[discord.py](https://github.com/Rapptz/dis
 
    チャンネル・ロール・メッセージ・メンバーの管理権限を付与してサーバーに招待。
 
-4. **起動**
+4. **任意: Cloudflare・GitHub CLIのセットアップ**（推奨）
+
+   Webデプロイ（Cloudflare）とGitHub連携を使う場合:
+
+   ```bash
+   # GitHub CLI（リポ管理・CI・Issue操作）
+   # https://cli.github.com/
+   gh auth login
+
+   # Cloudflare CLI（Pages/Workersデプロイ）
+   npm install -g wrangler
+   wrangler login
+   # ブラウザ認証の代わりに .env に CLOUDFLARE_API_TOKEN を設定してもOK
+   ```
+
+5. **起動**
 
    ```bash
    uv run python bot.py
