@@ -26,7 +26,23 @@ from context_manager import maybe_compress_history
 log = logging.getLogger("agent")
 
 DEFAULT_MODEL = "google/gemini-2.5-flash"
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 15
+
+# Popular free models on OpenRouter (for autocomplete)
+FREE_MODELS = [
+    ("Qwen3 Next 80B (MoE, 262k ctx)", "qwen/qwen3-next-80b-a3b-instruct:free"),
+    ("Qwen3 Coder (262k ctx)", "qwen/qwen3-coder:free"),
+    ("StepFun 3.5 Flash (256k ctx)", "stepfun/step-3.5-flash:free"),
+    ("Nemotron 3 Nano 30B (256k ctx)", "nvidia/nemotron-3-nano-30b-a3b:free"),
+    ("GPT-OSS 120B (131k ctx)", "openai/gpt-oss-120b:free"),
+    ("GPT-OSS 20B (131k ctx)", "openai/gpt-oss-20b:free"),
+    ("GLM 4.5 Air (131k ctx)", "z-ai/glm-4.5-air:free"),
+    ("Gemma 3 27B (131k ctx)", "google/gemma-3-27b-it:free"),
+    ("Llama 3.3 70B (128k ctx)", "meta-llama/llama-3.3-70b-instruct:free"),
+    ("Mistral Small 3.1 24B (128k ctx)", "mistralai/mistral-small-3.1-24b-instruct:free"),
+    ("Hermes 3 405B (131k ctx)", "nousresearch/hermes-3-llama-3.1-405b:free"),
+    ("Nemotron Nano 9B v2 (128k ctx)", "nvidia/nemotron-nano-9b-v2:free"),
+]
 API_MAX_RETRIES = 3
 API_RETRY_DELAYS = [2, 5, 15]  # seconds between retries
 STREAMING_EDIT_INTERVAL = 1.0  # seconds between message edits while streaming
@@ -402,6 +418,13 @@ class AgentCog(commands.Cog):
             tool_specs = tool_specs + self.bot.mcp.get_tool_specs()
 
         for round_num in range(MAX_TOOL_ROUNDS):
+            # Warn LLM when running low on tool rounds
+            remaining = MAX_TOOL_ROUNDS - round_num
+            if remaining == 3:
+                messages.append({"role": "system", "content": "⚠️ You have only 3 tool rounds remaining. Start wrapping up and provide your final answer soon. Do not start new searches."})
+            elif remaining == 1:
+                messages.append({"role": "system", "content": "⚠️ LAST tool round. You MUST provide your final answer now. Do NOT call any more tools."})
+
             try:
                 response = await self._call_llm(messages, tool_specs)
             except Exception as e:
@@ -571,13 +594,27 @@ class AgentCog(commands.Cog):
         await interaction.response.send_message("🗑️ Conversation history cleared.", ephemeral=True)
 
     @app_commands.command(name="model", description="Show or change the AI model")
-    @app_commands.describe(name="Model name (e.g. google/gemini-2.5-flash, openai/gpt-4o-mini)")
+    @app_commands.describe(name="Model name — select from free models or type a custom model ID")
     async def model_slash(self, interaction: discord.Interaction, name: str = None):
         if name:
             self.model = name
             await interaction.response.send_message(f"🤖 Model changed to `{name}`.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"🤖 Current model: `{self.model}`", ephemeral=True)
+            lines = [f"🤖 Current model: `{self.model}`", "", "**Free models available:**"]
+            for label, model_id in FREE_MODELS:
+                lines.append(f"- `{model_id}` — {label}")
+            await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @model_slash.autocomplete("name")
+    async def _model_autocomplete(self, interaction: discord.Interaction, current: str):
+        current_lower = current.lower()
+        choices = []
+        for label, model_id in FREE_MODELS:
+            if current_lower in model_id.lower() or current_lower in label.lower():
+                choices.append(app_commands.Choice(name=f"{label}", value=model_id))
+            if len(choices) >= 25:  # Discord limit
+                break
+        return choices
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
