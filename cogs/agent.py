@@ -85,11 +85,13 @@ Rules:
 8. Proactively remember important context from conversations.
 9. For complex tasks, plan your approach first, then execute step by step.
 10. Destructive actions (kick, ban, delete) require the user to have Discord permissions and will trigger a confirmation button.
-11. When your answer uses information from web_search or web_news, cite sources inline using numbered references like [1], [2], etc. At the end of your answer, include a "Sources" section listing each referenced URL. Format:
+11. When your answer uses information from web_search or web_news, you MUST cite sources using Discord markdown links. For each piece of information, place a clickable inline citation right next to it using the format [[n]](URL) where n is the source number. Example:
+    Qwen3.5は最新のMoEアーキテクチャを採用しています[[1]](https://example.com/article1)。GPT-5 miniを上回る性能とされています[[2]](https://example.com/article2)。
+    At the end of your answer, also include a **Sources** section listing all referenced URLs:
     **Sources**
-    [1] Title - URL
-    [2] Title - URL
-    Only include sources you actually referenced in your answer.
+    [[1]](https://example.com/article1) Article Title 1
+    [[2]](https://example.com/article2) Article Title 2
+    Every factual claim from search results MUST have an inline [[n]](URL) citation. Do not use plain [1] without a URL.
 
 {memories_context}
 """

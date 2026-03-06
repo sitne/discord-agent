@@ -123,6 +123,7 @@ async def web_search(guild: Guild, query: str, max_results: int = 5, region: str
     if not results:
         return f"No results found for '{query}'."
     lines = [f"Web search: '{query}' ({len(results)} results)"]
+    lines.append("Use [[n]](URL) for inline citations in your response.")
     lines.append("")
     for i, r in enumerate(results, 1):
         title = r.get('title', 'No title')
@@ -133,9 +134,9 @@ async def web_search(guild: Guild, query: str, max_results: int = 5, region: str
         lines.append(f"    {body}")
         lines.append("")
     lines.append("---")
-    lines.append("Sources:")
+    lines.append("Source references (use these for inline citations):")
     for i, r in enumerate(results, 1):
-        lines.append(f"[{i}] {r.get('href', '')}")
+        lines.append(f"[{i}] [[{i}]]({r.get('href', '')}) - {r.get('title', '')}")
     response = "\n".join(lines)
     _search_cache.set(cache_key, response)
     return response
@@ -168,6 +169,7 @@ async def web_news(guild: Guild, query: str, max_results: int = 5, **kwargs) -> 
     if not results:
         return f"No news found for '{query}'."
     lines = [f"News: '{query}' ({len(results)} articles)"]
+    lines.append("Use [[n]](URL) for inline citations in your response.")
     lines.append("")
     for i, r in enumerate(results, 1):
         title = r.get('title', '')
@@ -181,9 +183,9 @@ async def web_news(guild: Guild, query: str, max_results: int = 5, **kwargs) -> 
         lines.append(f"    {body}")
         lines.append("")
     lines.append("---")
-    lines.append("Sources:")
+    lines.append("Source references (use these for inline citations):")
     for i, r in enumerate(results, 1):
-        lines.append(f"[{i}] {r.get('url', '')}")
+        lines.append(f"[{i}] [[{i}]]({r.get('url', '')}) - {r.get('title', '')}")
     return "\n".join(lines)
 
 
