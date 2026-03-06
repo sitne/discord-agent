@@ -123,20 +123,15 @@ async def web_search(guild: Guild, query: str, max_results: int = 5, region: str
     if not results:
         return f"No results found for '{query}'."
     lines = [f"Web search: '{query}' ({len(results)} results)"]
-    lines.append("Use [[n]](URL) for inline citations in your response.")
     lines.append("")
-    for i, r in enumerate(results, 1):
+    for r in results:
         title = r.get('title', 'No title')
         url = r.get('href', '')
         body = r.get('body', '')[:400]
-        lines.append(f"[{i}] {title}")
-        lines.append(f"    URL: {url}")
-        lines.append(f"    {body}")
+        lines.append(f"- {title}")
+        lines.append(f"  {url}")
+        lines.append(f"  {body}")
         lines.append("")
-    lines.append("---")
-    lines.append("Source references (use these for inline citations):")
-    for i, r in enumerate(results, 1):
-        lines.append(f"[{i}] [[{i}]]({r.get('href', '')}) - {r.get('title', '')}")
     response = "\n".join(lines)
     _search_cache.set(cache_key, response)
     return response
@@ -169,23 +164,18 @@ async def web_news(guild: Guild, query: str, max_results: int = 5, **kwargs) -> 
     if not results:
         return f"No news found for '{query}'."
     lines = [f"News: '{query}' ({len(results)} articles)"]
-    lines.append("Use [[n]](URL) for inline citations in your response.")
     lines.append("")
-    for i, r in enumerate(results, 1):
+    for r in results:
         title = r.get('title', '')
         url = r.get('url', '')
         body = r.get('body', '')[:400]
         date = r.get('date', '')
-        lines.append(f"[{i}] {title}")
-        lines.append(f"    URL: {url}")
+        lines.append(f"- {title}")
+        lines.append(f"  {url}")
         if date:
-            lines.append(f"    Date: {date}")
-        lines.append(f"    {body}")
+            lines.append(f"  Date: {date}")
+        lines.append(f"  {body}")
         lines.append("")
-    lines.append("---")
-    lines.append("Source references (use these for inline citations):")
-    for i, r in enumerate(results, 1):
-        lines.append(f"[{i}] [[{i}]]({r.get('url', '')}) - {r.get('title', '')}")
     return "\n".join(lines)
 
 
