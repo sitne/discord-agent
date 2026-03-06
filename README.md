@@ -2,14 +2,14 @@
 
 **[日本語](README.ja.md)**
 
-A Discord bot that acts as an autonomous AI agent with 59 tools, long-term memory, a cron-based task scheduler, web capabilities, code generation with GitHub CI, generic HTTP client, and an extensible skills system following the [SKILL.md standard](https://agentskills.io). Powered by any LLM on [OpenRouter](https://openrouter.ai) (default: Gemini 2.5 Flash).
+A Discord bot that acts as an autonomous AI agent with 67 tools and 5 skills, long-term memory, a cron-based task scheduler, web capabilities, code generation with GitHub CI, a vision system for idea-to-project tracking, and an extensible skills system following the [SKILL.md standard](https://agentskills.io). Powered by any LLM on [OpenRouter](https://openrouter.ai).
 
-~5,400 lines of Python across 16 files. Built with [discord.py](https://github.com/Rapptz/discord.py).
+~6,500 lines of Python across 17 files. Built with [discord.py](https://github.com/Rapptz/discord.py).
 
 ## Features
 
 - **LLM-powered agent** — Routes through OpenRouter; switch models at runtime with `/model`
-- **59 tools** across 8 categories (Discord, Memory, Scheduler, Web, System, CodeGen, HTTP, Skills)
+- **67 tools** across 9 categories (Discord, Memory, Scheduler, Web, System, CodeGen, HTTP, Skills, Vision)
 - **Skills system** — follows the [SKILL.md standard](https://agentskills.io) with progressive disclosure; install community skills from GitHub, or let the bot create its own
 - **Long-term memory** — SQLite + FTS5 hybrid search with automatic context injection
 - **Autonomous scheduler** — Cron expressions, retry logic, dead-letter queue, execution history
@@ -17,6 +17,7 @@ A Discord bot that acts as an autonomous AI agent with 59 tools, long-term memor
 - **Conversation compression** — Automatic summarization when context exceeds 20 messages
 - **Safety first** — Permission checks and confirmation buttons for destructive actions
 - **Robust I/O** — API retry with exponential backoff, parallel tool execution, image/text attachment processing
+- **Vision system** — Capture ideas, refine them into projects, track milestones, active projects auto-injected into context
 - **MCP support** — Connect external tool servers via `mcp_servers.json`
 
 ## Tools
@@ -31,19 +32,30 @@ A Discord bot that acts as an autonomous AI agent with 59 tools, long-term memor
 | **CodeGen** | 6 | `codegen_create_project` `codegen_update_files` `codegen_check_ci` `codegen_list_projects` `codegen_read_file` `codegen_delete_file` |
 | **HTTP** | 1 | `http_request` |
 | **Skills** | 6 | `list_skills` `load_skill` `create_skill` `install_skill` `remove_skill` `search_community_skills` |
+| **Vision** | 8 | `capture_idea` `list_ideas` `search_ideas` `update_idea` `create_project` `list_projects` `update_project` `project_dashboard` |
 
 ## Setup
 
-**Requirements:** Python 3.12+
+**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/)
 
 1. **Clone and install dependencies**
 
    ```bash
    git clone https://github.com/sitne/discord-agent.git
    cd discord-agent
+   uv sync
+   uv run playwright install chromium
+   ```
+
+   <details>
+   <summary>Alternative: pip</summary>
+
+   ```bash
+   python -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
    playwright install chromium
    ```
+   </details>
 
 2. **Configure environment**
 
@@ -72,8 +84,10 @@ A Discord bot that acts as an autonomous AI agent with 59 tools, long-term memor
 4. **Run**
 
    ```bash
-   python bot.py
+   uv run python bot.py
    ```
+
+   Or with an activated venv: `python bot.py`
 
 ## Commands
 
@@ -93,9 +107,10 @@ tools_system.py         Shell execution and GitHub CLI tools
 tools_codegen.py        Code generation, GitHub project management, CI
 tools_http.py           Generic HTTP client with SSRF protection
 tools_skills.py         Skill management tools (SKILL.md standard)
+tools_vision.py         Vision system: ideas & project tracking
 tools_permissions.py    Permission checks and confirmation gates
 skills_manager.py       Skill discovery, loading, install, and creation
-skills/*/SKILL.md       Skill packages (image gen, translation, video, data analysis)
+skills/*/SKILL.md       Skill packages (5: cloudflare-deploy, data-analysis, image-gen, remotion-video, translation)
 context_manager.py      Conversation history and compression
 cron_parser.py          Cron expression parser
 mcp_manager.py          MCP server lifecycle and tool routing
