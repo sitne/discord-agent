@@ -94,8 +94,10 @@ A Discord bot that acts as an autonomous AI agent with 79 tools and 5 skills, lo
 
    # Cloudflare CLI (Pages/Workers deploy)
    npm install -g wrangler
-   wrangler login
-   # Or set CLOUDFLARE_API_TOKEN in .env instead of browser login
+   # Set API token in .env (recommended for servers/bots)
+   # Create at: https://dash.cloudflare.com/profile/api-tokens
+   # → "Create Token" → "Edit Cloudflare Workers" template
+   # Or for local dev: wrangler login (opens browser)
    ```
 
 5. **Run**

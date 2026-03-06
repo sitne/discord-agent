@@ -94,8 +94,10 @@ Python 17ファイル・約6,500行。[discord.py](https://github.com/Rapptz/dis
 
    # Cloudflare CLI（Pages/Workersデプロイ）
    npm install -g wrangler
-   wrangler login
-   # ブラウザ認証の代わりに .env に CLOUDFLARE_API_TOKEN を設定してもOK
+   # APIトークンを.envに設定（サーバー/bot環境推奨）
+   # 作成: https://dash.cloudflare.com/profile/api-tokens
+   # → "Create Token" → "Edit Cloudflare Workers" テンプレート
+   # ローカル開発なら: wrangler login（ブラウザ認証）
    ```
 
 5. **起動**
