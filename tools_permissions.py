@@ -2,8 +2,22 @@
 import discord
 import asyncio
 import logging
+import os
 
 log = logging.getLogger("tools.permissions")
+
+# Owner ID from env — this user bypasses all permission checks and shell restrictions
+OWNER_ID: int | None = None
+_raw = os.getenv("OWNER_ID", "").strip()
+if _raw.isdigit():
+    OWNER_ID = int(_raw)
+
+
+def is_owner(user_id: int | str) -> bool:
+    """Check if a user is the bot owner."""
+    if OWNER_ID is None:
+        return False
+    return int(user_id) == OWNER_ID
 
 # Map tool names to required Discord permissions
 PERMISSION_REQUIREMENTS = {
@@ -28,8 +42,11 @@ CONFIRMATION_REQUIRED = {
 
 def check_permission(guild: discord.Guild, user_id: str, tool_name: str) -> tuple[bool, str]:
     """Check if a user has the required Discord permission for a tool.
-    Returns (allowed, reason).
+    Returns (allowed, reason). Owner bypasses all checks.
     """
+    if is_owner(user_id):
+        return True, ""
+
     required = PERMISSION_REQUIREMENTS.get(tool_name)
     if not required:
         return True, ""

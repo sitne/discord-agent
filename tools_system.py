@@ -5,6 +5,7 @@ import os
 
 from tools import tool
 from discord import Guild
+from tools_permissions import is_owner
 
 log = logging.getLogger("tools.system")
 
@@ -44,10 +45,14 @@ def _is_safe(cmd: str) -> bool:
     },
 )
 async def run_shell(guild: Guild, command: str, working_dir: str = None, timeout: int = 30, **kwargs) -> str:
-    if not _is_safe(command):
+    caller_is_owner = is_owner(kwargs.get("user_id", ""))
+
+    if not caller_is_owner and not _is_safe(command):
         return "⛔ Command blocked for safety reasons."
 
-    timeout = min(timeout, 120)
+    # Owner gets longer timeout
+    max_timeout = 300 if caller_is_owner else 120
+    timeout = min(timeout, max_timeout)
     cwd = working_dir or os.path.expanduser("~")
 
     try:
@@ -274,10 +279,11 @@ async def gh_search_code(guild: Guild, query: str, repo: str = None, limit: int 
     },
 )
 async def gh_run_command(guild: Guild, args: str, **kwargs) -> str:
-    # Block dangerous operations
-    dangerous = ["auth logout", "auth token", "ssh-key delete"]
-    if any(d in args.lower() for d in dangerous):
-        return "⛔ This gh command is blocked for safety."
+    # Block dangerous operations (owner bypasses)
+    if not is_owner(kwargs.get("user_id", "")):
+        dangerous = ["auth logout", "auth token", "ssh-key delete"]
+        if any(d in args.lower() for d in dangerous):
+            return "⛔ This gh command is blocked for safety."
     result = await _gh(args, timeout=60)
     if len(result) > MAX_OUTPUT_LEN:
         result = result[:MAX_OUTPUT_LEN] + "\n... (truncated)"

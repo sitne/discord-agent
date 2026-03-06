@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 from tools import get_tool_specs, get_tool_executor
 from tools_permissions import (
     check_permission,
+    is_owner,
     needs_confirmation,
     request_confirmation,
 )
@@ -289,13 +290,23 @@ class AgentCog(commands.Cog):
                     lines.append(f"- [{m['category']}] {m['key']}: {m['content'][:300]}{imp}")
                 memories_context = "\n".join(lines)
 
+        owner_context = ""
+        if is_owner(message.author.id):
+            owner_context = """\n\nOWNER MODE ACTIVE:
+This user is the bot owner. You have FULL unrestricted access:
+- Shell commands have NO safety restrictions (rm, sudo, etc. are all allowed)
+- No permission checks or confirmation prompts
+- You can manage the host system, install packages, edit files, manage services
+- Treat this as a personal AI assistant with full system access
+- Be helpful and execute commands directly without excessive warnings"""
+
         return SYSTEM_PROMPT_TEMPLATE.format(
             server_name=message.guild.name if message.guild else "DM",
             member_count=message.guild.member_count if message.guild else 1,
             channel_name=message.channel.name if hasattr(message.channel, "name") else "DM",
             user_name=message.author.display_name,
             memories_context=memories_context,
-        )
+        ) + owner_context
 
     # ── LLM call with retry ───────────────────────────────────────────────
 
@@ -351,8 +362,8 @@ class AgentCog(commands.Cog):
                 if not allowed:
                     return {"tool_call_id": tc.id, "content": f"⛔ Permission denied: {reason}"}
 
-            # ── Confirmation for destructive ops ──────────────────────
-            if guild and needs_confirmation(tool_name):
+            # ── Confirmation for destructive ops (owner skips) ────────
+            if guild and needs_confirmation(tool_name) and not is_owner(user_id):
                 try:
                     confirmed = await request_confirmation(
                         channel, int(user_id), tool_name, tool_args, timeout=60.0,
@@ -381,6 +392,7 @@ class AgentCog(commands.Cog):
                             guild,
                             db=self.bot.db,
                             channel_id=channel_id,
+                            user_id=user_id,
                             user_name=user_name,
                             **tool_args,
                         )
@@ -398,8 +410,9 @@ class AgentCog(commands.Cog):
 
         # Run all tool calls concurrently
         # But serialize confirmation-required tools (user can only click one at a time)
-        confirm_tcs = [tc for tc in tool_calls if needs_confirmation(tc.function.name)]
-        parallel_tcs = [tc for tc in tool_calls if not needs_confirmation(tc.function.name)]
+        owner_calling = is_owner(user_id)
+        confirm_tcs = [tc for tc in tool_calls if needs_confirmation(tc.function.name) and not owner_calling]
+        parallel_tcs = [tc for tc in tool_calls if not needs_confirmation(tc.function.name) or owner_calling]
 
         results = []
 
