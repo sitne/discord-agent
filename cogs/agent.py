@@ -28,44 +28,72 @@ log = logging.getLogger("agent")
 DEFAULT_MODEL = "google/gemini-2.5-flash"
 MAX_TOOL_ROUNDS = 15
 
-# Dynamic free model cache
-_free_models_cache: list[tuple[str, str, int]] = []  # (model_id, name, context_length)
-_free_models_cached_at: float = 0
-_FREE_MODELS_TTL = 3600  # refresh every 1 hour
+# Dynamic model cache from OpenRouter API
+MIN_CONTEXT_LENGTH = 40000  # minimum ctx for agent use
+_models_cache: dict[str, dict] = {}  # model_id -> {name, ctx, free, tools}
+_free_agent_cache: list[tuple[str, str, int]] = []  # filtered: free + tools + min ctx
+_models_cached_at: float = 0
+_MODELS_TTL = 3600  # refresh every 1 hour
 
 
-async def _fetch_free_models() -> list[tuple[str, str, int]]:
-    """Fetch currently available free models from OpenRouter API. Cached for 1h."""
+async def _refresh_models_cache() -> None:
+    """Fetch all models from OpenRouter API and cache them."""
     import time, aiohttp
-    global _free_models_cache, _free_models_cached_at
+    global _models_cache, _free_agent_cache, _models_cached_at
 
     now = time.time()
-    if _free_models_cache and (now - _free_models_cached_at) < _FREE_MODELS_TTL:
-        return _free_models_cache
+    if _models_cache and (now - _models_cached_at) < _MODELS_TTL:
+        return
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get("https://openrouter.ai/api/v1/models", timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 data = await resp.json()
-        models = []
+
+        all_models = {}
+        free_agent = []
         for m in data.get("data", []):
+            model_id = m["id"]
             pricing = m.get("pricing", {})
             prompt_cost = float(pricing.get("prompt", "1") or "1")
             completion_cost = float(pricing.get("completion", "1") or "1")
-            if prompt_cost == 0 and completion_cost == 0:
-                model_id = m["id"]
-                name = m.get("name", model_id)
-                ctx = m.get("context_length", 0)
-                models.append((model_id, name, ctx))
-        # Sort by context length descending
-        models.sort(key=lambda x: -x[2])
-        _free_models_cache = models
-        _free_models_cached_at = now
-        log.info(f"Fetched {len(models)} free models from OpenRouter")
-        return models
+            is_free = (prompt_cost == 0 and completion_cost == 0)
+            sp = m.get("supported_parameters", [])
+            has_tools = "tools" in sp
+            ctx = m.get("context_length", 0)
+            name = m.get("name", model_id)
+
+            all_models[model_id] = {
+                "name": name, "ctx": ctx, "free": is_free, "tools": has_tools,
+            }
+            # Agent-ready: free + tool use + sufficient context
+            if is_free and has_tools and ctx >= MIN_CONTEXT_LENGTH:
+                free_agent.append((model_id, name, ctx))
+
+        free_agent.sort(key=lambda x: -x[2])
+        _models_cache = all_models
+        _free_agent_cache = free_agent
+        _models_cached_at = now
+        log.info(f"OpenRouter: {len(all_models)} models total, {len(free_agent)} free agent-ready")
     except Exception as e:
-        log.warning(f"Failed to fetch free models: {e}")
-        return _free_models_cache  # return stale cache on error
+        log.warning(f"Failed to fetch models from OpenRouter: {e}")
+
+
+def _validate_model(model_id: str) -> tuple[bool, str]:
+    """Validate a model ID. Returns (ok, message)."""
+    if not _models_cache:
+        return True, ""  # cache not loaded yet, allow
+    info = _models_cache.get(model_id)
+    if not info:
+        return False, f"Model `{model_id}` not found on OpenRouter."
+    warnings = []
+    if not info["tools"]:
+        warnings.append("⚠️ This model does not support tool use. Agent functionality will be severely limited.")
+    if info["ctx"] < MIN_CONTEXT_LENGTH:
+        warnings.append(f"⚠️ Context length ({info['ctx']:,}) is very short for agent use.")
+    if not info["free"]:
+        warnings.append("💰 This is a paid model. It will consume your OpenRouter credits.")
+    return True, "\n".join(warnings)
 API_MAX_RETRIES = 3
 API_RETRY_DELAYS = [2, 5, 15]  # seconds between retries
 STREAMING_EDIT_INTERVAL = 1.0  # seconds between message edits while streaming
@@ -617,36 +645,42 @@ class AgentCog(commands.Cog):
         await interaction.response.send_message("🗑️ Conversation history cleared.", ephemeral=True)
 
     @app_commands.command(name="model", description="Show or change the AI model")
-    @app_commands.describe(name="Model name — select from free models or type a custom model ID")
+    @app_commands.describe(name="Model name — select from list or type a model ID")
     async def model_slash(self, interaction: discord.Interaction, name: str = None):
+        await _refresh_models_cache()
         if name:
+            valid, warning = _validate_model(name)
+            if not valid:
+                await interaction.response.send_message(f"❌ {warning}", ephemeral=True)
+                return
             self.model = name
-            await interaction.response.send_message(f"🤖 Model changed to `{name}`.", ephemeral=True)
+            msg = f"🤖 Model changed to `{name}`."
+            if warning:
+                msg += f"\n{warning}"
+            await interaction.response.send_message(msg, ephemeral=True)
         else:
-            free_models = await _fetch_free_models()
             lines = [f"🤖 Current model: `{self.model}`"]
-            if free_models:
-                lines.append(f"\n**Free models ({len(free_models)} available)** — use `/model` and select:")
-                # Show top 15 by context length
-                for model_id, name_str, ctx in free_models[:15]:
+            if _free_agent_cache:
+                lines.append(f"\n**Free agent-ready models ({len(_free_agent_cache)} available):**")
+                lines.append("_Tool use対応 + 十分なコンテキスト長のモデルのみ表示_")
+                for model_id, name_str, ctx in _free_agent_cache[:15]:
                     ctx_k = f"{ctx // 1000}k" if ctx >= 1000 else str(ctx)
                     lines.append(f"- `{model_id}` ({ctx_k} ctx)")
-                if len(free_models) > 15:
-                    lines.append(f"_...and {len(free_models) - 15} more (type to search)_")
+                if len(_free_agent_cache) > 15:
+                    lines.append(f"_...and {len(_free_agent_cache) - 15} more (type to search)_")
             await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     @model_slash.autocomplete("name")
     async def _model_autocomplete(self, interaction: discord.Interaction, current: str):
-        free_models = await _fetch_free_models()
+        await _refresh_models_cache()
         current_lower = current.lower()
         choices = []
-        for model_id, name_str, ctx in free_models:
+        for model_id, name_str, ctx in _free_agent_cache:
             ctx_k = f"{ctx // 1000}k" if ctx >= 1000 else str(ctx)
-            label = f"{name_str} ({ctx_k})"
+            label = f"✅ {name_str} ({ctx_k})"
             if not current_lower or current_lower in model_id.lower() or current_lower in name_str.lower():
-                # Discord choice name max 100 chars
                 choices.append(app_commands.Choice(name=label[:100], value=model_id))
-            if len(choices) >= 25:  # Discord limit
+            if len(choices) >= 25:
                 break
         return choices
 
