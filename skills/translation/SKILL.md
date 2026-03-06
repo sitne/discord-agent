@@ -1,8 +1,7 @@
 ---
-name: Translation
-description: Translate text between languages using free APIs
+name: translation
+description: Translate text between languages using free APIs. Use when the user asks to translate, convert between languages, or needs localization.
 keywords: [translate, translation, language, convert, english, japanese, spanish, french, chinese, korean, localize, i18n, 翻訳, 訳して, 英訳, 和訳, 中国語, 韓国語, フランス語, スペイン語]
-tools: [http_request]
 ---
 
 # Translation

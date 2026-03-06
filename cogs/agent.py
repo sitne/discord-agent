@@ -23,7 +23,7 @@ from tools_permissions import (
     request_confirmation,
 )
 from context_manager import maybe_compress_history
-from skills_manager import match_skills, format_skills_context
+from skills_manager import discover_skills, format_skills_discovery
 
 log = logging.getLogger("agent")
 
@@ -137,6 +137,7 @@ Capabilities:
 - **Shell commands**: run system commands on the host
 - **MCP tools**: additional capabilities from connected MCP servers
 - **Attachments**: can read images (vision), text files, and audio (transcription)
+- **Skills**: Load specialized knowledge on-demand with `load_skill`. Check available skills before attempting unfamiliar tasks. After successfully completing a novel task, create a skill with `create_skill` to remember the approach.
 
 Memory guidelines:
 - Proactively use 'remember' to save important information (server rules, user preferences, decisions, recurring topics).
@@ -292,11 +293,9 @@ class AgentCog(commands.Cog):
                 memories_context = "\n".join(lines)
 
         skills_context = ""
-        if user_input:
-            matched = match_skills(user_input)
-            if matched:
-                skills_context = "\n" + format_skills_context(matched)
-                log.info(f"Skills injected: {[s['name'] for s in matched]}")
+        skills = discover_skills()
+        if skills:
+            skills_context = "\n" + format_skills_discovery(skills)
 
         owner_context = ""
         if is_owner(message.author.id):

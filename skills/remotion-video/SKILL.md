@@ -1,8 +1,7 @@
 ---
-name: Remotion Video Generation
-description: Generate videos using Remotion with codegen and GitHub Actions
+name: remotion-video
+description: Generate videos using Remotion with codegen and GitHub Actions. Use when the user asks to create a video, animation, motion graphic, slideshow, or render an MP4.
 keywords: [video, animation, motion, clip, render, remotion, movie, mp4, recording, slideshow, 動画, アニメーション, ムービー, レンダリング, スライドショー]
-tools: [codegen, shell_exec]
 ---
 
 # Video Generation with Remotion

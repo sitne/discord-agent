@@ -1,8 +1,7 @@
 ---
-name: Image Generation
-description: Generate images using free APIs
+name: image-generation
+description: Generate images using free APIs like Pollinations.ai. Use when the user asks to create, draw, generate, or make an image, picture, illustration, icon, logo, or diagram.
 keywords: [image, picture, photo, generate, draw, illustration, art, visual, icon, logo, diagram, 画像, 写真, 絵, イラスト, 生成, 描いて, アイコン, ロゴ]
-tools: [http_request]
 ---
 
 # Image Generation

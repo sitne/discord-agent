@@ -16,6 +16,8 @@ import tools_web     # noqa: F401 - Web search, reading, screenshots
 import tools_system  # noqa: F401 - Shell, GitHub CLI
 import tools_codegen # noqa: F401 - Code generation, GitHub projects
 import tools_http    # noqa: F401 - Generic HTTP requests
+import tools_skills  # noqa: F401 - Skill management (SKILL.md standard)
+import tools_skills  # noqa: F401 - Skill management tools
 
 load_dotenv()
 

@@ -1,8 +1,7 @@
 ---
-name: Data Analysis
-description: Analyse CSV/JSON data using Python and pandas via codegen
+name: data-analysis
+description: Analyse CSV/JSON data using Python and pandas via codegen. Use when the user asks to analyse data, create charts, compute statistics, or process spreadsheets.
 keywords: [data, csv, json, analysis, chart, graph, statistics, pandas, plot, excel, table, aggregate, count, average, sum, データ, 分析, グラフ, 統計, 表, 集計, 平均]
-tools: [codegen, shell_exec]
 ---
 
 # Data Analysis with Python + pandas
