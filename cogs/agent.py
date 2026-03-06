@@ -28,21 +28,44 @@ log = logging.getLogger("agent")
 DEFAULT_MODEL = "google/gemini-2.5-flash"
 MAX_TOOL_ROUNDS = 15
 
-# Popular free models on OpenRouter (for autocomplete)
-FREE_MODELS = [
-    ("Qwen3 Next 80B (MoE, 262k ctx)", "qwen/qwen3-next-80b-a3b-instruct:free"),
-    ("Qwen3 Coder (262k ctx)", "qwen/qwen3-coder:free"),
-    ("StepFun 3.5 Flash (256k ctx)", "stepfun/step-3.5-flash:free"),
-    ("Nemotron 3 Nano 30B (256k ctx)", "nvidia/nemotron-3-nano-30b-a3b:free"),
-    ("GPT-OSS 120B (131k ctx)", "openai/gpt-oss-120b:free"),
-    ("GPT-OSS 20B (131k ctx)", "openai/gpt-oss-20b:free"),
-    ("GLM 4.5 Air (131k ctx)", "z-ai/glm-4.5-air:free"),
-    ("Gemma 3 27B (131k ctx)", "google/gemma-3-27b-it:free"),
-    ("Llama 3.3 70B (128k ctx)", "meta-llama/llama-3.3-70b-instruct:free"),
-    ("Mistral Small 3.1 24B (128k ctx)", "mistralai/mistral-small-3.1-24b-instruct:free"),
-    ("Hermes 3 405B (131k ctx)", "nousresearch/hermes-3-llama-3.1-405b:free"),
-    ("Nemotron Nano 9B v2 (128k ctx)", "nvidia/nemotron-nano-9b-v2:free"),
-]
+# Dynamic free model cache
+_free_models_cache: list[tuple[str, str, int]] = []  # (model_id, name, context_length)
+_free_models_cached_at: float = 0
+_FREE_MODELS_TTL = 3600  # refresh every 1 hour
+
+
+async def _fetch_free_models() -> list[tuple[str, str, int]]:
+    """Fetch currently available free models from OpenRouter API. Cached for 1h."""
+    import time, aiohttp
+    global _free_models_cache, _free_models_cached_at
+
+    now = time.time()
+    if _free_models_cache and (now - _free_models_cached_at) < _FREE_MODELS_TTL:
+        return _free_models_cache
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://openrouter.ai/api/v1/models", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                data = await resp.json()
+        models = []
+        for m in data.get("data", []):
+            pricing = m.get("pricing", {})
+            prompt_cost = float(pricing.get("prompt", "1") or "1")
+            completion_cost = float(pricing.get("completion", "1") or "1")
+            if prompt_cost == 0 and completion_cost == 0:
+                model_id = m["id"]
+                name = m.get("name", model_id)
+                ctx = m.get("context_length", 0)
+                models.append((model_id, name, ctx))
+        # Sort by context length descending
+        models.sort(key=lambda x: -x[2])
+        _free_models_cache = models
+        _free_models_cached_at = now
+        log.info(f"Fetched {len(models)} free models from OpenRouter")
+        return models
+    except Exception as e:
+        log.warning(f"Failed to fetch free models: {e}")
+        return _free_models_cache  # return stale cache on error
 API_MAX_RETRIES = 3
 API_RETRY_DELAYS = [2, 5, 15]  # seconds between retries
 STREAMING_EDIT_INTERVAL = 1.0  # seconds between message edits while streaming
@@ -600,18 +623,29 @@ class AgentCog(commands.Cog):
             self.model = name
             await interaction.response.send_message(f"🤖 Model changed to `{name}`.", ephemeral=True)
         else:
-            lines = [f"🤖 Current model: `{self.model}`", "", "**Free models available:**"]
-            for label, model_id in FREE_MODELS:
-                lines.append(f"- `{model_id}` — {label}")
+            free_models = await _fetch_free_models()
+            lines = [f"🤖 Current model: `{self.model}`"]
+            if free_models:
+                lines.append(f"\n**Free models ({len(free_models)} available)** — use `/model` and select:")
+                # Show top 15 by context length
+                for model_id, name_str, ctx in free_models[:15]:
+                    ctx_k = f"{ctx // 1000}k" if ctx >= 1000 else str(ctx)
+                    lines.append(f"- `{model_id}` ({ctx_k} ctx)")
+                if len(free_models) > 15:
+                    lines.append(f"_...and {len(free_models) - 15} more (type to search)_")
             await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     @model_slash.autocomplete("name")
     async def _model_autocomplete(self, interaction: discord.Interaction, current: str):
+        free_models = await _fetch_free_models()
         current_lower = current.lower()
         choices = []
-        for label, model_id in FREE_MODELS:
-            if current_lower in model_id.lower() or current_lower in label.lower():
-                choices.append(app_commands.Choice(name=f"{label}", value=model_id))
+        for model_id, name_str, ctx in free_models:
+            ctx_k = f"{ctx // 1000}k" if ctx >= 1000 else str(ctx)
+            label = f"{name_str} ({ctx_k})"
+            if not current_lower or current_lower in model_id.lower() or current_lower in name_str.lower():
+                # Discord choice name max 100 chars
+                choices.append(app_commands.Choice(name=label[:100], value=model_id))
             if len(choices) >= 25:  # Discord limit
                 break
         return choices
