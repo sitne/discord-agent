@@ -846,3 +846,353 @@ async def db_stats(guild: Guild, **kwargs) -> str:
             lines.append(f"- {cat}: {cnt}")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Thread management
+# ---------------------------------------------------------------------------
+
+@tool(
+    name="create_thread",
+    description="Create a new thread in a text channel. Can be a standalone thread or attached to an existing message.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "channel_name": {
+                "type": "string",
+                "description": "Name of the parent text channel",
+            },
+            "thread_name": {
+                "type": "string",
+                "description": "Name of the thread to create",
+            },
+            "message_id": {
+                "type": "string",
+                "description": "Optional: message ID to attach the thread to (creates a thread from that message)",
+            },
+            "auto_archive_duration": {
+                "type": "integer",
+                "enum": [60, 1440, 4320, 10080],
+                "description": "Auto-archive after minutes of inactivity: 60 (1h), 1440 (1d), 4320 (3d), 10080 (7d). Default: 1440",
+            },
+            "slowmode_delay": {
+                "type": "integer",
+                "description": "Slowmode in seconds (0 to disable, max 21600)",
+            },
+            "private": {
+                "type": "boolean",
+                "description": "Create a private thread (only invited members can see it). Default: false",
+            },
+            "initial_message": {
+                "type": "string",
+                "description": "Optional: send an initial message in the thread after creation",
+            },
+        },
+        "required": ["channel_name", "thread_name"],
+    },
+)
+async def create_thread(guild: Guild, channel_name: str, thread_name: str, **kwargs) -> str:
+    ch = discord.utils.find(
+        lambda c: channel_name.lower() in c.name.lower() and isinstance(c, TextChannel),
+        guild.channels,
+    )
+    if not ch:
+        return f"Channel '{channel_name}' not found."
+
+    message_id = kwargs.get("message_id")
+    auto_archive = kwargs.get("auto_archive_duration", 1440)
+    slowmode = kwargs.get("slowmode_delay")
+    private = kwargs.get("private", False)
+    initial_message = kwargs.get("initial_message")
+
+    thread_kwargs = {
+        "name": thread_name,
+        "auto_archive_duration": auto_archive,
+    }
+    if slowmode is not None:
+        thread_kwargs["slowmode_delay"] = min(max(slowmode, 0), 21600)
+
+    if message_id:
+        try:
+            msg = await ch.fetch_message(int(message_id))
+            thread = await msg.create_thread(**thread_kwargs)
+        except discord.NotFound:
+            return f"Message {message_id} not found in #{ch.name}."
+    else:
+        thread_type = ChannelType.private_thread if private else ChannelType.public_thread
+        thread_kwargs["type"] = thread_type
+        if thread_type == ChannelType.public_thread:
+            thread_kwargs["invitable"] = True
+        thread = await ch.create_thread(**thread_kwargs)
+
+    result = f"✅ Thread **{thread.name}** created in #{ch.name} (ID: {thread.id})"
+    if private:
+        result += " [private]"
+
+    if initial_message:
+        await thread.send(initial_message)
+        result += "\nInitial message sent."
+
+    return result
+
+
+@tool(
+    name="list_threads",
+    description="List active and optionally archived threads in a channel or the entire server.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "channel_name": {
+                "type": "string",
+                "description": "Filter threads by parent channel name (optional, shows all if omitted)",
+            },
+            "include_archived": {
+                "type": "boolean",
+                "description": "Include archived threads (default: false)",
+            },
+        },
+        "required": [],
+    },
+)
+async def list_threads(guild: Guild, **kwargs) -> str:
+    channel_name = kwargs.get("channel_name")
+    include_archived = kwargs.get("include_archived", False)
+
+    # Filter parent channel if specified
+    if channel_name:
+        parent = discord.utils.find(
+            lambda c: channel_name.lower() in c.name.lower() and isinstance(c, TextChannel),
+            guild.channels,
+        )
+        if not parent:
+            return f"Channel '{channel_name}' not found."
+        parents = [parent]
+    else:
+        parents = [c for c in guild.channels if isinstance(c, TextChannel)]
+
+    lines = []
+
+    # Active threads (from guild cache)
+    active = [t for t in guild.threads if not channel_name or t.parent_id in [p.id for p in parents]]
+    if active:
+        lines.append(f"**Active threads** ({len(active)}):")
+        for t in sorted(active, key=lambda t: t.name.lower()):
+            parent_name = t.parent.name if t.parent else "unknown"
+            lock = "🔒" if t.locked else ""
+            priv = "🔑" if t.is_private() else ""
+            members = f" ({t.member_count} members)" if t.member_count else ""
+            lines.append(f"- **{t.name}** in #{parent_name}{members} {lock}{priv} (ID: {t.id})")
+
+    # Archived threads
+    if include_archived:
+        archived_threads = []
+        for p in parents[:10]:  # Limit parent channels to avoid rate limits
+            try:
+                async for t in p.archived_threads(limit=20):
+                    archived_threads.append(t)
+            except discord.Forbidden:
+                pass
+        if archived_threads:
+            lines.append(f"\n**Archived threads** ({len(archived_threads)}):")
+            for t in archived_threads:
+                parent_name = t.parent.name if t.parent else "unknown"
+                lock = "🔒" if t.locked else ""
+                lines.append(f"- **{t.name}** in #{parent_name} {lock} (ID: {t.id})")
+
+    if not lines:
+        scope = f" in #{channel_name}" if channel_name else ""
+        return f"No threads found{scope}."
+
+    return "\n".join(lines)
+
+
+@tool(
+    name="edit_thread",
+    description="Edit a thread's properties — name, archived, locked, slowmode, auto-archive duration, or pinned status.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "thread_id": {
+                "type": "string",
+                "description": "ID of the thread to edit",
+            },
+            "name": {
+                "type": "string",
+                "description": "New thread name",
+            },
+            "archived": {
+                "type": "boolean",
+                "description": "Archive (true) or unarchive (false) the thread",
+            },
+            "locked": {
+                "type": "boolean",
+                "description": "Lock (true) or unlock (false) the thread. Locked threads can only be unarchived by moderators",
+            },
+            "pinned": {
+                "type": "boolean",
+                "description": "Pin (true) or unpin (false) the thread in a forum channel",
+            },
+            "slowmode_delay": {
+                "type": "integer",
+                "description": "Slowmode in seconds (0 to disable)",
+            },
+            "auto_archive_duration": {
+                "type": "integer",
+                "enum": [60, 1440, 4320, 10080],
+                "description": "Auto-archive after minutes: 60/1440/4320/10080",
+            },
+        },
+        "required": ["thread_id"],
+    },
+)
+async def edit_thread(guild: Guild, thread_id: str, **kwargs) -> str:
+    thread = guild.get_thread(int(thread_id))
+    if not thread:
+        try:
+            thread = await guild.fetch_channel(int(thread_id))
+        except (discord.NotFound, discord.Forbidden):
+            return f"Thread {thread_id} not found."
+
+    edit_kwargs = {}
+    changes = []
+    for key in ("name", "archived", "locked", "pinned", "slowmode_delay", "auto_archive_duration"):
+        if key in kwargs:
+            edit_kwargs[key] = kwargs[key]
+            changes.append(f"{key}={kwargs[key]!r}")
+
+    if not edit_kwargs:
+        return "No changes specified."
+
+    await thread.edit(**edit_kwargs)
+    return f"✅ Thread **{thread.name}** updated: {', '.join(changes)}"
+
+
+@tool(
+    name="delete_thread",
+    description="Delete a thread.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "thread_id": {
+                "type": "string",
+                "description": "ID of the thread to delete",
+            },
+        },
+        "required": ["thread_id"],
+    },
+)
+async def delete_thread(guild: Guild, thread_id: str, **kwargs) -> str:
+    thread = guild.get_thread(int(thread_id))
+    if not thread:
+        try:
+            thread = await guild.fetch_channel(int(thread_id))
+        except (discord.NotFound, discord.Forbidden):
+            return f"Thread {thread_id} not found."
+
+    name = thread.name
+    await thread.delete()
+    return f"✅ Thread **{name}** deleted."
+
+
+@tool(
+    name="thread_add_member",
+    description="Add a user to a thread. The user will be able to see and participate in the thread.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "thread_id": {
+                "type": "string",
+                "description": "ID of the thread",
+            },
+            "user_name": {
+                "type": "string",
+                "description": "Display name or username of the member to add",
+            },
+        },
+        "required": ["thread_id", "user_name"],
+    },
+)
+async def thread_add_member(guild: Guild, thread_id: str, user_name: str, **kwargs) -> str:
+    thread = guild.get_thread(int(thread_id))
+    if not thread:
+        try:
+            thread = await guild.fetch_channel(int(thread_id))
+        except (discord.NotFound, discord.Forbidden):
+            return f"Thread {thread_id} not found."
+
+    member = discord.utils.find(
+        lambda m: user_name.lower() in m.display_name.lower() or user_name.lower() in m.name.lower(),
+        guild.members,
+    )
+    if not member:
+        return f"Member '{user_name}' not found."
+
+    await thread.add_user(member)
+    return f"✅ Added **{member.display_name}** to thread **{thread.name}**."
+
+
+@tool(
+    name="thread_remove_member",
+    description="Remove a user from a thread.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "thread_id": {
+                "type": "string",
+                "description": "ID of the thread",
+            },
+            "user_name": {
+                "type": "string",
+                "description": "Display name or username of the member to remove",
+            },
+        },
+        "required": ["thread_id", "user_name"],
+    },
+)
+async def thread_remove_member(guild: Guild, thread_id: str, user_name: str, **kwargs) -> str:
+    thread = guild.get_thread(int(thread_id))
+    if not thread:
+        try:
+            thread = await guild.fetch_channel(int(thread_id))
+        except (discord.NotFound, discord.Forbidden):
+            return f"Thread {thread_id} not found."
+
+    member = discord.utils.find(
+        lambda m: user_name.lower() in m.display_name.lower() or user_name.lower() in m.name.lower(),
+        guild.members,
+    )
+    if not member:
+        return f"Member '{user_name}' not found."
+
+    await thread.remove_user(member)
+    return f"✅ Removed **{member.display_name}** from thread **{thread.name}**."
+
+
+@tool(
+    name="send_thread_message",
+    description="Send a message in a thread (by thread ID).",
+    parameters={
+        "type": "object",
+        "properties": {
+            "thread_id": {
+                "type": "string",
+                "description": "ID of the thread to send to",
+            },
+            "content": {
+                "type": "string",
+                "description": "Message content to send",
+            },
+        },
+        "required": ["thread_id", "content"],
+    },
+)
+async def send_thread_message(guild: Guild, thread_id: str, content: str, **kwargs) -> str:
+    thread = guild.get_thread(int(thread_id))
+    if not thread:
+        try:
+            thread = await guild.fetch_channel(int(thread_id))
+        except (discord.NotFound, discord.Forbidden):
+            return f"Thread {thread_id} not found."
+
+    msg = await thread.send(content)
+    return f"✅ Message sent in thread **{thread.name}** (message ID: {msg.id})."

@@ -2,14 +2,14 @@
 
 **[English](README.md)**
 
-67種のツールと5つのスキル、長期記憶、cronベースの自律スケジューラ、Web機能、コード生成+GitHub CI、アイデア→プロジェクト管理のVisionシステム、[SKILL.md標準](https://agentskills.io)準拠の拡張可能スキルシステムを備えた自律AIエージェント型Discord Bot。[OpenRouter](https://openrouter.ai) 経由で任意のLLMを利用可能。
+74種のツールと5つのスキル、長期記憶、cronベースの自律スケジューラ、Web機能、コード生成+GitHub CI、アイデア→プロジェクト管理のVisionシステム、[SKILL.md標準](https://agentskills.io)準拠の拡張可能スキルシステムを備えた自律AIエージェント型Discord Bot。[OpenRouter](https://openrouter.ai) 経由で任意のLLMを利用可能。
 
 Python 17ファイル・約6,500行。[discord.py](https://github.com/Rapptz/discord.py) 使用。
 
 ## 機能
 
 - **LLMエージェント** — OpenRouter経由で任意のモデルを利用、`/model` で実行時に切り替え可能
-- **67種のツール** — Discord管理・記憶・スケジューラ・Web・システム・コード生成・HTTP・スキル・Visionの9カテゴリ
+- **74種のツール** — Discord管理・スレッド・記憶・スケジューラ・Web・システム・コード生成・HTTP・スキル・Visionの10カテゴリ
 - **スキルシステム** — [SKILL.md標準](https://agentskills.io)準拠、段階的開示（Progressive Disclosure）、GitHubからコミュニティスキルをインストール可能、botが自律的にスキルを作成
 - **長期記憶** — SQLite + FTS5ハイブリッド検索、関連記憶の自動コンテキスト注入
 - **自律スケジューラ** — cron式、リトライ・デッドレターキュー・実行履歴
@@ -31,6 +31,7 @@ Python 17ファイル・約6,500行。[discord.py](https://github.com/Rapptz/dis
 | **システム** | 11 | `run_shell` + GitHub CLIツール 10種 |
 | **コード生成** | 6 | `codegen_create_project` `codegen_update_files` `codegen_check_ci` `codegen_list_projects` `codegen_read_file` `codegen_delete_file` |
 | **HTTP** | 1 | `http_request` |
+| **スレッド** | 7 | `create_thread` `list_threads` `edit_thread` `delete_thread` `thread_add_member` `thread_remove_member` `send_thread_message` |
 | **スキル** | 6 | `list_skills` `load_skill` `create_skill` `install_skill` `remove_skill` `search_community_skills` |
 | **Vision** | 8 | `capture_idea` `list_ideas` `search_ideas` `update_idea` `create_project` `list_projects` `update_project` `project_dashboard` |
 
